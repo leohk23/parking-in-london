@@ -12,6 +12,7 @@ const OVERPASS_URLS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
 const HEDGE_AFTER_MS = 6000;
 
@@ -52,16 +53,25 @@ out geom;`;
 
 export async function fetchOsm(bbox, { street, center, streets, fetchImpl = fetch, endpoints = OVERPASS_URLS, hedgeAfterMs = HEDGE_AFTER_MS } = {}) {
   const body = new URLSearchParams({ data: overpassQuery(bbox, { street, center, streets }) }).toString();
-  const json = await firstSuccessful(endpoints, hedgeAfterMs, async (url, signal) => {
-    const res = await fetchImpl(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-      body,
-      signal,
+  let json;
+  try {
+    json = await firstSuccessful(endpoints, hedgeAfterMs, async (url, signal) => {
+      const res = await fetchImpl(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body,
+        signal,
+      });
+      if (!res.ok) throw new Error(`OpenStreetMap (Overpass) returned ${res.status}`);
+      return res.json();
     });
-    if (!res.ok) throw new Error(`OpenStreetMap (Overpass) returned ${res.status}`);
-    return res.json();
-  });
+  } catch (err) {
+    // Busy Overpass servers send their "too many requests" replies without CORS
+    // headers, so browsers only report a vague network error. Say what it means.
+    throw new Error('its servers are busy or unreachable right now, so car parks are missing. Try again in a minute', {
+      cause: err,
+    });
+  }
   return parseOsm(json);
 }
 

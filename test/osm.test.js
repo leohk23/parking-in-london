@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseOsm, parseConditional, overpassQuery, firstSuccessful } from '../src/sources/osm.js';
+import { parseOsm, parseConditional, overpassQuery, firstSuccessful, fetchOsm } from '../src/sources/osm.js';
 import { evaluateOption } from '../src/evaluate.js';
 import { londonClock } from '../src/schedule.js';
 
@@ -175,5 +175,33 @@ test('rejects only when every endpoint fails', async () => {
       throw new Error(`${url} failed`);
     }),
     /b failed/,
+  );
+});
+
+test('fetchOsm moves on from a server that fails like a busy one does in a browser', async () => {
+  const asked = [];
+  const result = await fetchOsm([51.49, -0.25, 51.5, -0.24], {
+    hedgeAfterMs: 1000,
+    endpoints: ['https://main.example/api', 'https://mirror.example/api'],
+    fetchImpl: async (url) => {
+      asked.push(url);
+      if (url.includes('main')) throw new TypeError('NetworkError when attempting to fetch resource.');
+      return { ok: true, json: async () => ({ elements: [{ type: 'node', id: 1, lat: 51.495, lon: -0.245, tags: { amenity: 'parking', fee: 'no' } }] }) };
+    },
+  });
+  assert.deepEqual(asked, ['https://main.example/api', 'https://mirror.example/api']);
+  assert.equal(result.options.length, 1);
+});
+
+test('fetchOsm explains when every server fails', async () => {
+  await assert.rejects(
+    fetchOsm([51.49, -0.25, 51.5, -0.24], {
+      hedgeAfterMs: 1000,
+      endpoints: ['https://a.example/api', 'https://b.example/api'],
+      fetchImpl: async () => {
+        throw new TypeError('NetworkError when attempting to fetch resource.');
+      },
+    }),
+    /servers are busy or unreachable right now/,
   );
 });
