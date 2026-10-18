@@ -4,13 +4,19 @@
 import { geocode, reverseGeocode } from './geocode.js';
 import { fetchOsm } from './sources/osm.js';
 import { fetchCamden } from './sources/camden.js';
-import { zoneOptions, normaliseName } from './sources/zones.js';
+import { fetchCouncilZones } from './sources/council-zones.js';
+import { zoneOptions, zonesCover, normaliseName } from './sources/zones.js';
 import { evaluateOption, STATUS_RANK, STATUS_LABELS } from './evaluate.js';
 import { londonClock, isBankHoliday, DAY_NAMES } from './schedule.js';
 import { bboxAround, distanceToOption } from './geo.js';
 
 const $ = (sel) => document.querySelector(sel);
-const SOURCE_LABELS = { osm: 'OpenStreetMap', camden: 'Camden Council open data', zones: 'Council zone hours' };
+const SOURCE_LABELS = {
+  osm: 'OpenStreetMap',
+  camden: 'Camden Council open data',
+  zones: 'Council zone hours',
+  'council-zones': "Council's zone map",
+};
 const COLORS = () => {
   const css = getComputedStyle(document.documentElement);
   return Object.fromEntries(['free', 'paid', 'no', 'unknown'].map((s) => [s, css.getPropertyValue(`--${s}`).trim()]));
@@ -25,6 +31,7 @@ const resultsLayer = L.layerGroup().addTo(map);
 const layersById = new Map();
 
 let current = null;
+let searchCount = 0;
 
 $('#search').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -82,6 +89,8 @@ function locationError(err) {
 }
 
 async function search({ query, dest }) {
+  const id = ++searchCount;
+  const isLatest = () => id === searchCount;
   const stay = Number($('#stay').value);
   const radius = Number($('#radius').value);
   const isNow = !$('#arrive').value;
@@ -92,42 +101,57 @@ async function search({ query, dest }) {
       showProgress('Finding the place…');
       dest = await geocode(query);
     }
+    if (!isLatest()) return;
     saveToUrl(query ?? $('#q').value);
 
-    showProgress('Loading parking data…');
     const area = bboxAround(dest.point, radius);
-    const [osm, camden] = await Promise.allSettled([
-      fetchOsm(area, { street: dest.street, center: dest.point }),
-      fetchCamden(area),
-    ]);
-
-    const raw = [];
-    const sourceNotes = [];
-    if (osm.status === 'fulfilled') {
-      raw.push(...osm.value.options, ...zoneOptions(osm.value.streets));
-    } else {
-      sourceNotes.push(`OpenStreetMap didn't load (${osm.reason.message}), so car parks and zone streets are missing.`);
-    }
-    if (camden.status === 'fulfilled') raw.push(...camden.value.options);
-    else sourceNotes.push(`Camden bay data didn't load (${camden.reason.message}).`);
-
     const clock = londonClock(arrival);
     const destStreet = dest.street && normaliseName(dest.street);
-    const options = raw
-      .map((o) => ({
-        ...evaluateOption(o, clock, stay),
-        distance: distanceToOption(dest.point, o),
-        onStreet: Boolean(destStreet && normaliseName(o.title) === destStreet),
-      }))
-      .filter((o) => o.onStreet || o.distance <= radius);
+    const prepare = (o) => {
+      const distance = distanceToOption(dest.point, o);
+      const here = o.kind === 'zone' ? distance === 0 : Boolean(destStreet && normaliseName(o.title) === destStreet);
+      return { ...evaluateOption(o, clock, stay), distance, here };
+    };
 
-    current = { dest, options, clock, isNow, stay, sourceNotes };
+    // Each source is shown as soon as it arrives: council zones take under a
+    // second, OpenStreetMap can take much longer when its servers are busy.
+    const sources = [
+      {
+        name: 'OpenStreetMap',
+        load: fetchOsm(area, { street: dest.street, center: dest.point, streets: zonesCover(area) }).then((r) => [
+          ...r.options,
+          ...zoneOptions(r.streets),
+        ]),
+      },
+      { name: "the council's zone map", load: fetchCouncilZones(area).then((r) => r.options) },
+      { name: 'Camden bay data', load: fetchCamden(area).then((r) => r.options) },
+    ];
+    const waiting = new Set(sources.map((src) => src.name));
+    current = { dest, options: [], clock, isNow, stay, sourceNotes: [], loading: true };
+    showProgress('Loading parking data…');
     render();
-    showProgress(null);
+
+    await Promise.all(
+      sources.map(({ name, load }) =>
+        load
+          .then(
+            (raw) => isLatest() && current.options.push(...raw.map(prepare).filter((o) => o.here || o.distance <= radius)),
+            (err) => isLatest() && current.sourceNotes.push(`Couldn't load ${name} (${err.message}).`),
+          )
+          .finally(() => {
+            if (!isLatest()) return;
+            waiting.delete(name);
+            current.loading = waiting.size > 0;
+            if (current.loading) showProgress(`Still loading ${[...waiting].join(' and ')}…`);
+            render();
+          }),
+      ),
+    );
+    if (isLatest()) showProgress(null);
   } catch (err) {
-    showProgress(err.message, 'error');
+    if (isLatest()) showProgress(err.message, 'error');
   } finally {
-    setBusy(false);
+    if (isLatest()) setBusy(false);
   }
 }
 
@@ -142,7 +166,7 @@ function render() {
     .sort((a, b) =>
       sort === 'near'
         ? a.distance - b.distance
-        : b.onStreet - a.onStreet || STATUS_RANK[a.status] - STATUS_RANK[b.status] || a.distance - b.distance,
+        : b.here - a.here || STATUS_RANK[a.status] - STATUS_RANK[b.status] || a.distance - b.distance,
     );
 
   const counts = current.options.reduce((acc, o) => ({ ...acc, [o.status]: (acc[o.status] ?? 0) + 1 }), {});
@@ -161,7 +185,13 @@ function render() {
   drawMap(dest, options);
   $('#list').innerHTML = options.length
     ? options.map((o) => `<li class="card ${o.status}" tabindex="0" data-id="${esc(o.id)}">${cardHtml(o)}</li>`).join('')
-    : `<li class="status">${freeOnly ? 'Nothing free for your whole stay here. Try a bigger radius or untick the filter.' : 'No parking data found nearby. OpenStreetMap coverage of street parking is patchy outside some areas.'}</li>`;
+    : `<li class="status">${
+        current.loading
+          ? 'Loading…'
+          : freeOnly
+            ? 'Nothing free for your whole stay here. Try a bigger radius or untick the filter.'
+            : 'No parking data found nearby. OpenStreetMap coverage of street parking is patchy outside some areas.'
+      }</li>`;
   for (const el of document.querySelectorAll('#list .card')) {
     const open = (e) => !e.target.closest('details, a') && focusOption(el.dataset.id);
     el.addEventListener('click', open);
@@ -176,18 +206,33 @@ function drawMap(dest, options) {
   L.marker(dest.point, { title: dest.label }).addTo(resultsLayer);
   L.circle(dest.point, { radius: Number($('#radius').value), color: colors.unknown, weight: 1, fill: false, dashArray: '4 6' }).addTo(resultsLayer);
 
-  // Draw worst first so free options end up on top.
-  for (const o of [...options].sort((a, b) => STATUS_RANK[b.status] - STATUS_RANK[a.status])) {
+  // Zones go underneath; then worst first so free options end up on top.
+  const order = (o) => (o.kind === 'zone' ? -1 : 0);
+  for (const o of [...options].sort((a, b) => order(a) - order(b) || STATUS_RANK[b.status] - STATUS_RANK[a.status])) {
     const color = colors[o.status];
-    const layer = o.lines
-      ? L.polyline(o.lines, { color, weight: o.kind === 'bay' ? 7 : 6, opacity: 0.9 })
-      : L.circleMarker(o.point, { radius: 9, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 });
+    let layer;
+    if (o.polygons) {
+      layer = L.polygon(o.polygons, {
+        color,
+        weight: 2,
+        opacity: 0.8,
+        fillColor: color,
+        fillOpacity: o.here ? 0.12 : 0.05,
+        dashArray: o.here ? null : '6 5',
+      });
+      layer.bindTooltip(esc(o.title), { permanent: true, direction: 'center', className: 'zone-label' });
+    } else if (o.lines) {
+      layer = L.polyline(o.lines, { color, weight: o.kind === 'bay' ? 7 : 6, opacity: 0.9 });
+    } else {
+      layer = L.circleMarker(o.point, { radius: 9, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 });
+    }
     layer.bindPopup(`<div class="card ${o.status}">${cardHtml(o)}</div>`, { maxWidth: 320 });
     layer.addTo(resultsLayer);
     layersById.set(o.id, layer);
   }
+  // Zones can be large, so the view fits the destination and nearby spaces only.
   const bounds = L.latLngBounds([dest.point]);
-  for (const o of options.filter((o) => o.distance < 600 || o.onStreet)) {
+  for (const o of options.filter((o) => !o.polygons && (o.distance < 600 || o.here))) {
     if (o.point) bounds.extend(o.point);
     else o.lines.forEach((line) => bounds.extend(line));
   }
@@ -216,7 +261,11 @@ function cardHtml(o) {
     .join('');
   const notes = [...(o.notes ?? []), ...new Set(o.results.flatMap((r) => r.notes))];
   const partlyFree = o.status === 'free' && o.results.some((r) => r.status !== 'free');
-  const where = o.onStreet ? 'your street' : `${Math.round(o.distance / 10) * 10} m · ${Math.max(1, Math.round(o.distance / 80))} min walk`;
+  const where = o.here
+    ? o.kind === 'zone'
+      ? "you're in this zone"
+      : 'your street'
+    : `${Math.round(o.distance / 10) * 10} m · ${Math.max(1, Math.round(o.distance / 80))} min walk`;
   return `
     <div class="card-head">
       <span class="badge ${o.status}">${partlyFree ? 'Part free' : STATUS_LABELS[o.status]}</span>

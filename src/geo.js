@@ -47,8 +47,24 @@ export function distanceToLine(p, line) {
   return best;
 }
 
-/** Distance from a point to an option's marker or nearest line. */
+/** Even-odd test, so holes in a polygon count as outside. */
+export function inPolygon([lat, lon], rings) {
+  let inside = false;
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [yi, xi] = ring[i];
+      const [yj, xj] = ring[j];
+      if (yi > lat !== yj > lat && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/** Distance from a point to an option's marker, nearest line, or zone (0 inside it). */
 export function distanceToOption(p, option) {
   if (option.point) return distance(p, option.point);
+  if (option.polygons) {
+    return inPolygon(p, option.polygons) ? 0 : Math.min(...option.polygons.map((ring) => distanceToLine(p, ring)));
+  }
   return Math.min(...option.lines.map((line) => distanceToLine(p, line)));
 }

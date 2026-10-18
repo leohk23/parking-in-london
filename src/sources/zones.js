@@ -3,13 +3,18 @@
 
 import * as curated from '../../data/zones.js';
 import { parseSchedule } from '../schedule.js';
-import { inBbox } from '../geo.js';
+import { inBbox, bboxesOverlap } from '../geo.js';
 
 const ZONE_NOTE =
   'Outside zone hours you can park free in residents, shared-use and pay bays and on single yellow lines, unless a sign says otherwise. Never on double yellows.';
 
 export function normaliseName(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/** Whether any hand-maintained borough overlaps the area, i.e. street geometry is worth fetching. */
+export function zonesCover(bbox, data = curated) {
+  return Object.values(data.BOROUGHS).some((b) => bboxesOverlap(bbox, b.bbox));
 }
 
 /** `streets` are named OSM ways: [{ name, line }]. */

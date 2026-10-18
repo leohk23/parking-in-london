@@ -1,0 +1,25 @@
+name: Probe live data
+
+# Prints what the app would show for a place, using the live data sources:
+# Actions → Probe live data → Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      place:
+        description: Place, postcode or lat,lon to check
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - env:
+          PLACE: ${{ inputs.place }}
+        run: node scripts/probe.mjs "$PLACE"

@@ -7,7 +7,13 @@
 
 import { parseSchedule } from '../schedule.js';
 
-const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+// The main Overpass server first; mirrors join in if it's slow or failing.
+const OVERPASS_URLS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+];
+const HEDGE_AFTER_MS = 6000;
 
 const NOT_DRIVABLE = new Set([
   'footway', 'path', 'cycleway', 'steps', 'pedestrian', 'bridleway', 'track', 'corridor', 'elevator',
@@ -25,27 +31,76 @@ const PARKING_TYPES = {
   layby: 'Lay-by',
 };
 
-export function overpassQuery([s, w, n, e], { street, center } = {}) {
+/**
+ * `streets` adds every named road's geometry, which is only needed where
+ * hand-maintained zone data (data/zones.js) has streets to draw.
+ */
+export function overpassQuery([s, w, n, e], { street, center, streets = true } = {}) {
   const bbox = `${s},${w},${n},${e}`;
   // The destination street is fetched in full, even beyond the search box.
   const wholeStreet =
     street && center
       ? `way["highway"]["name"="${street.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"](around:2500,${center[0]},${center[1]});`
       : '';
+  const named = streets ? `way["highway"]["name"](${bbox});` : '';
   return `[out:json][timeout:25];
 nwr["amenity"="parking"](${bbox})->.parking;
 .parking out center;
-(way["highway"]["name"](${bbox});way["highway"][~"^parking:"~"."](${bbox});${wholeStreet});
+(${named}way["highway"][~"^parking:"~"."](${bbox});${wholeStreet});
 out geom;`;
 }
 
-export async function fetchOsm(bbox, { street, center, fetchImpl = fetch } = {}) {
-  const res = await fetchImpl(OVERPASS_URL, {
-    method: 'POST',
-    body: new URLSearchParams({ data: overpassQuery(bbox, { street, center }) }),
+export async function fetchOsm(bbox, { street, center, streets, fetchImpl = fetch, endpoints = OVERPASS_URLS, hedgeAfterMs = HEDGE_AFTER_MS } = {}) {
+  const body = new URLSearchParams({ data: overpassQuery(bbox, { street, center, streets }) }).toString();
+  const json = await firstSuccessful(endpoints, hedgeAfterMs, async (url, signal) => {
+    const res = await fetchImpl(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body,
+      signal,
+    });
+    if (!res.ok) throw new Error(`OpenStreetMap (Overpass) returned ${res.status}`);
+    return res.json();
   });
-  if (!res.ok) throw new Error(`OpenStreetMap (Overpass) returned ${res.status}`);
-  return parseOsm(await res.json());
+  return parseOsm(json);
+}
+
+/**
+ * Asks the first endpoint, and the next one whenever `delayMs` passes without
+ * an answer or a request fails. Resolves with the first success and cancels
+ * the rest; rejects only when every endpoint has failed.
+ */
+export function firstSuccessful(endpoints, delayMs, request) {
+  return new Promise((resolve, reject) => {
+    const controllers = [];
+    let failures = 0;
+    let settled = false;
+    let timer;
+    const launch = () => {
+      clearTimeout(timer);
+      if (settled || controllers.length >= endpoints.length) return;
+      const controller = new AbortController();
+      controllers.push(controller);
+      request(endpoints[controllers.length - 1], controller.signal).then(
+        (value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          for (const c of controllers) if (c !== controller) c.abort();
+          resolve(value);
+        },
+        (err) => {
+          if (settled) return;
+          if (++failures === endpoints.length) {
+            settled = true;
+            reject(err);
+          } else launch();
+        },
+      );
+      timer = setTimeout(launch, delayMs);
+    };
+    launch();
+  });
 }
 
 /** Returns { options, streets }: parking options, and named roads with their geometry. */
