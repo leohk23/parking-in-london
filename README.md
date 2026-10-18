@@ -35,15 +35,26 @@ Searches go in the URL (`?q=Wimbledon+Park+Road&stay=120`), so you can bookmark 
 
 ## Where the data comes from
 
-London has no single open dataset of parking restrictions, so the app combines three sources. Each result shows which source it came from.
+London has no single open dataset of parking restrictions, so the app combines four sources. Each result shows which source it came from, and each appears as soon as it loads.
 
 | Source | Covers | Notes |
 | --- | --- | --- |
 | [OpenStreetMap](https://www.openstreetmap.org) via the Overpass API | All of London: car parks (fee and opening hours), plus street parking where mappers have tagged it | Street parking coverage is patchy. You can improve it yourself, e.g. with the StreetComplete app. |
+| Councils' own zone maps (`src/sources/council-zones.js`) | Every street in a borough: controlled parking zone boundaries with their days, hours and charges, queried live | Hammersmith & Fulham so far. The council's map can lag behind recent hour changes, so the zone entry sign has the final word. |
 | [Camden Council "Parking Bays"](https://opendata.camden.gov.uk/Transport/Parking-Bays/7hiv-3r9k) | Every on-street bay in Camden, with type, times, max stay and tariff | Loaded only when you search in or near Camden. |
 | `data/zones.js` | Controlled parking zone (CPZ) hours for streets you add by hand, taken from council websites | Seeded with Wandsworth's Southfields and Putney A6 zones and Wimbledon Park Road. |
 
 Postcodes are looked up with [postcodes.io](https://postcodes.io); other places with OpenStreetMap's Nominatim.
+
+OpenStreetMap's Overpass servers can be slow when busy. If the main server hasn't answered within 6 seconds, the same request also goes to a mirror, and whichever answers first is used.
+
+### Checking a place against the live data
+
+```sh
+node scripts/probe.mjs "Stamford Court, London"    # or a postcode, or 51.4957,-0.2437
+```
+
+It prints the geocoder's matches, how much street-parking detail OpenStreetMap has nearby, the council zones, and the same results list the app shows. You can run it without a computer too: Actions → **Probe live data** → Run workflow.
 
 ### Adding your streets
 
@@ -61,6 +72,10 @@ The street is then drawn on the map from OpenStreetMap geometry, using the zone 
 - All times are London time, including clock changes. Bank holidays are flagged, because some zones stop on bank holidays and some don't.
 - Bays and single yellow lines in a CPZ only apply during the hours shown. Outside them they're free, unless a sign says otherwise.
 - A street in several zones (Wimbledon Park Road is in A6, S1 and S5, depending on house number) gets one line per zone. The card says **Part free** when only some zones are free.
+
+### Adding another borough's zone map
+
+Many councils publish their zone boundaries on an ArcGIS map service (search data.gov.uk for "controlled parking zones"). If the layer has fields for days and hours, add an entry to `ZONE_LAYERS` in `src/sources/council-zones.js` with its URL, a rough `bbox` and functions that read the zone name, hours and cost.
 
 ## Not covered yet
 

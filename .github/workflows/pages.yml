@@ -41,6 +41,10 @@ jobs:
         run: |
           mkdir _site
           cp -r index.html styles.css manifest.webmanifest icons src data vendor _site/
+          # Versioned URLs, so a phone never runs a mix of old and new files after a deploy.
+          v="${GITHUB_SHA::8}"
+          sed -i -E "s#(href|src)=\"(styles\.css|src/app\.js)\"#\1=\"\2?v=$v\"#" _site/index.html
+          find _site/src _site/data -name '*.js' -exec sed -i -E "s#(from '\.{1,2}/[^']*\.js)'#\1?v=$v'#" {} +
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

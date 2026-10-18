@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseOsm, parseConditional, overpassQuery } from '../src/sources/osm.js';
+import { parseOsm, parseConditional, overpassQuery, firstSuccessful, fetchOsm } from '../src/sources/osm.js';
 import { evaluateOption } from '../src/evaluate.js';
 import { londonClock } from '../src/schedule.js';
 
@@ -126,4 +126,82 @@ test('query fetches the whole destination street', () => {
   const q = overpassQuery([51.4, -0.21, 51.41, -0.2], { street: 'Wimbledon Park Road', center: [51.44, -0.205] });
   assert.match(q, /way\["highway"\]\["name"="Wimbledon Park Road"\]\(around:2500,51.44,-0.205\)/);
   assert.match(overpassQuery([0, 0, 1, 1], { street: 'A "quoted" road', center: [0, 0] }), /A \\"quoted\\" road/);
+});
+
+test('street geometry is only requested when asked for', () => {
+  const bbox = [51.49, -0.25, 51.5, -0.24];
+  assert.match(overpassQuery(bbox), /way\["highway"\]\["name"\]\(51\.49/);
+  assert.doesNotMatch(overpassQuery(bbox, { streets: false }), /way\["highway"\]\["name"\]\(51\.49/);
+  assert.match(overpassQuery(bbox, { streets: false }), /amenity"="parking"/);
+});
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('first answer wins and slower requests are cancelled', async () => {
+  const aborted = [];
+  const value = await firstSuccessful(['slow', 'fast'], 20, async (url, signal) => {
+    signal.addEventListener('abort', () => aborted.push(url));
+    await wait(url === 'slow' ? 200 : 10);
+    return url;
+  });
+  assert.equal(value, 'fast');
+  assert.deepEqual(aborted, ['slow']);
+});
+
+test('a quick answer means no backup request', async () => {
+  const asked = [];
+  const value = await firstSuccessful(['a', 'b'], 50, async (url) => {
+    asked.push(url);
+    return url;
+  });
+  assert.equal(value, 'a');
+  await wait(80);
+  assert.deepEqual(asked, ['a']);
+});
+
+test('a failure moves straight on to the next endpoint', async () => {
+  const started = Date.now();
+  const value = await firstSuccessful(['down', 'up'], 1000, async (url) => {
+    if (url === 'down') throw new Error('HTTP 429');
+    return url;
+  });
+  assert.equal(value, 'up');
+  assert.ok(Date.now() - started < 500);
+});
+
+test('rejects only when every endpoint fails', async () => {
+  await assert.rejects(
+    firstSuccessful(['a', 'b'], 10, async (url) => {
+      throw new Error(`${url} failed`);
+    }),
+    /b failed/,
+  );
+});
+
+test('fetchOsm moves on from a server that fails like a busy one does in a browser', async () => {
+  const asked = [];
+  const result = await fetchOsm([51.49, -0.25, 51.5, -0.24], {
+    hedgeAfterMs: 1000,
+    endpoints: ['https://main.example/api', 'https://mirror.example/api'],
+    fetchImpl: async (url) => {
+      asked.push(url);
+      if (url.includes('main')) throw new TypeError('NetworkError when attempting to fetch resource.');
+      return { ok: true, json: async () => ({ elements: [{ type: 'node', id: 1, lat: 51.495, lon: -0.245, tags: { amenity: 'parking', fee: 'no' } }] }) };
+    },
+  });
+  assert.deepEqual(asked, ['https://main.example/api', 'https://mirror.example/api']);
+  assert.equal(result.options.length, 1);
+});
+
+test('fetchOsm explains when every server fails', async () => {
+  await assert.rejects(
+    fetchOsm([51.49, -0.25, 51.5, -0.24], {
+      hedgeAfterMs: 1000,
+      endpoints: ['https://a.example/api', 'https://b.example/api'],
+      fetchImpl: async () => {
+        throw new TypeError('NetworkError when attempting to fetch resource.');
+      },
+    }),
+    /servers are busy or unreachable right now/,
+  );
 });
