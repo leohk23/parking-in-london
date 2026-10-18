@@ -38,13 +38,15 @@ $('#search').addEventListener('submit', (e) => {
   search({ query: $('#q').value });
 });
 $('#locate').addEventListener('click', locate);
-// An empty arrival time means "now"; the Now button clears it.
-$('#now').addEventListener('click', () => {
-  $('#arrive').value = '';
-  syncNowButton();
-});
-$('#arrive').addEventListener('input', syncNowButton);
-$('#arrive').addEventListener('change', syncNowButton);
+// "Now" shows the current time in the box and keeps it current; picking a
+// time switches it off, and the Now button (or clearing the box) brings it back.
+let arriveNow = true;
+$('#now').addEventListener('click', () => setArriveNow(true));
+for (const type of ['input', 'change']) {
+  $('#arrive').addEventListener(type, () => setArriveNow(!$('#arrive').value));
+}
+setInterval(showNowTime, 30000);
+document.addEventListener('visibilitychange', showNowTime);
 $('#freeOnly').addEventListener('change', render);
 $('#sort').addEventListener('change', render);
 
@@ -93,7 +95,7 @@ async function search({ query, dest }) {
   const isLatest = () => id === searchCount;
   const stay = Number($('#stay').value);
   const radius = Number($('#radius').value);
-  const isNow = !$('#arrive').value;
+  const isNow = arriveNow || Number.isNaN(new Date($('#arrive').value).getTime());
   const arrival = isNow ? new Date() : new Date($('#arrive').value);
   setBusy(true);
   try {
@@ -296,8 +298,20 @@ function setBusy(busy) {
   $('#locate').disabled = busy;
 }
 
-function syncNowButton() {
-  $('#now').setAttribute('aria-pressed', String(!$('#arrive').value));
+function setArriveNow(now) {
+  arriveNow = now;
+  $('#now').setAttribute('aria-pressed', String(now));
+  showNowTime();
+}
+
+function showNowTime() {
+  if (arriveNow) $('#arrive').value = localInputValue(new Date());
+}
+
+/** The "YYYY-MM-DDTHH:MM" a datetime-local input expects, in the device's time zone. */
+function localInputValue(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function saveToUrl(query) {
@@ -305,7 +319,7 @@ function saveToUrl(query) {
   if (query) params.set('q', query);
   params.set('stay', $('#stay').value);
   params.set('r', $('#radius').value);
-  if ($('#arrive').value) params.set('at', $('#arrive').value);
+  if (!arriveNow) params.set('at', $('#arrive').value);
   history.replaceState(null, '', `?${params}`);
 }
 
@@ -314,7 +328,7 @@ function restoreFromUrl() {
   for (const [key, sel] of [['stay', '#stay'], ['r', '#radius'], ['at', '#arrive']]) {
     if (params.has(key)) $(sel).value = params.get(key);
   }
-  syncNowButton();
+  setArriveNow(!params.get('at'));
   if (params.get('q')) {
     $('#q').value = params.get('q');
     search({ query: params.get('q') });
