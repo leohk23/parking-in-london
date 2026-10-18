@@ -22,7 +22,13 @@
           <button type="button" id="locate" class="secondary" title="Use my location" aria-label="Use my location">◎</button>
         </div>
         <div class="row options">
-          <label>Arrive <input id="arrive" type="datetime-local" aria-describedby="arrive-hint" /></label>
+          <div class="field when">
+            <span id="arrive-label">Arrive</span>
+            <div class="when-row">
+              <button type="button" id="now" class="chip" aria-pressed="true">Now</button>
+              <input id="arrive" type="datetime-local" aria-labelledby="arrive-label" />
+            </div>
+          </div>
           <label>Stay
             <select id="stay">
               <option value="30">30 min</option>
@@ -42,7 +48,7 @@
           </label>
           <button type="submit" id="go">Find parking</button>
         </div>
-        <small id="arrive-hint" class="hint">Leave "Arrive" empty for now.</small>
+        <p id="progress" class="progress" role="status" aria-live="polite" hidden></p>
       </form>
     </header>
 

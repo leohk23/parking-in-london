@@ -1,7 +1,7 @@
 // Page wiring: search form → geocode → fetch sources → evaluate → map and list.
 /* global L */
 
-import { geocode } from './geocode.js';
+import { geocode, reverseGeocode } from './geocode.js';
 import { fetchOsm } from './sources/osm.js';
 import { fetchCamden } from './sources/camden.js';
 import { zoneOptions, normaliseName } from './sources/zones.js';
@@ -30,31 +30,71 @@ $('#search').addEventListener('submit', (e) => {
   e.preventDefault();
   search({ query: $('#q').value });
 });
-$('#locate').addEventListener('click', () => {
-  if (!navigator.geolocation) return showStatus('Location is not available in this browser.', 'error');
-  showStatus('Finding your location…');
-  navigator.geolocation.getCurrentPosition(
-    (pos) => search({ point: [pos.coords.latitude, pos.coords.longitude] }),
-    (err) => showStatus(`Couldn't get your location: ${err.message}`, 'error'),
-    { enableHighAccuracy: true, timeout: 15000 },
-  );
+$('#locate').addEventListener('click', locate);
+// An empty arrival time means "now"; the Now button clears it.
+$('#now').addEventListener('click', () => {
+  $('#arrive').value = '';
+  syncNowButton();
 });
+$('#arrive').addEventListener('input', syncNowButton);
+$('#arrive').addEventListener('change', syncNowButton);
 $('#freeOnly').addEventListener('change', render);
 $('#sort').addEventListener('change', render);
 
 restoreFromUrl();
 
-async function search({ query, point }) {
+async function locate() {
+  if (!navigator.geolocation) return showProgress('Location isn\'t available in this browser. Type a place instead.', 'error');
+  setBusy(true);
+  $('#locate').classList.add('busy');
+  showProgress('Getting your location…');
+  let point;
+  try {
+    point = await currentPosition();
+  } catch (err) {
+    setBusy(false);
+    return showProgress(locationError(err), 'error');
+  } finally {
+    $('#locate').classList.remove('busy');
+  }
+
+  showProgress('Finding the address…');
+  const place = await reverseGeocode(point, { signal: AbortSignal.timeout?.(6000) }).catch(() => null);
+  $('#q').value = place?.label ?? '';
+  await search({ dest: { label: place?.label ?? 'Your location', point, street: place?.street ?? null } });
+}
+
+function currentPosition() {
+  return new Promise((resolve, reject) =>
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve([pos.coords.latitude, pos.coords.longitude]),
+      reject,
+      // A fix from the last minute is good enough and saves waiting for GPS.
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 },
+    ),
+  );
+}
+
+function locationError(err) {
+  if (err.code === 1) return 'Location is blocked for this site. Allow it in your browser settings, or type a place.';
+  if (err.code === 3) return 'Getting your location took too long. Try again, or type a place.';
+  return "Couldn't get your location. Try again, or type a place.";
+}
+
+async function search({ query, dest }) {
   const stay = Number($('#stay').value);
   const radius = Number($('#radius').value);
-  const arrival = $('#arrive').value ? new Date($('#arrive').value) : new Date();
+  const isNow = !$('#arrive').value;
+  const arrival = isNow ? new Date() : new Date($('#arrive').value);
   setBusy(true);
   try {
-    showStatus('Finding the place…');
-    const dest = point ? { label: 'Your location', point, street: null } : await geocode(query);
-    saveToUrl(query);
+    if (!dest) {
+      showProgress('Finding the place…');
+      dest = await geocode(query);
+    }
+    saveToUrl(query ?? $('#q').value);
 
-    showStatus('Loading parking data…');
+    showProgress('Loading parking data…');
     const area = bboxAround(dest.point, radius);
     const [osm, camden] = await Promise.allSettled([
       fetchOsm(area, { street: dest.street, center: dest.point }),
@@ -81,10 +121,11 @@ async function search({ query, point }) {
       }))
       .filter((o) => o.onStreet || o.distance <= radius);
 
-    current = { dest, options, clock, stay, sourceNotes };
+    current = { dest, options, clock, isNow, stay, sourceNotes };
     render();
+    showProgress(null);
   } catch (err) {
-    showStatus(err.message, 'error');
+    showProgress(err.message, 'error');
   } finally {
     setBusy(false);
   }
@@ -92,7 +133,7 @@ async function search({ query, point }) {
 
 function render() {
   if (!current) return;
-  const { dest, clock, stay, sourceNotes } = current;
+  const { dest, clock, isNow, stay, sourceNotes } = current;
   const freeOnly = $('#freeOnly').checked;
   const sort = $('#sort').value;
 
@@ -111,11 +152,9 @@ function render() {
     warnings.push("It's a bank holiday. Many zones don't operate today, but some do. Check the signs.");
   }
   showStatus(
-    `<b>${esc(dest.label)}</b> · arriving ${esc(when)} for ${stayLabel(stay)}<br>` +
+    `<b>${esc(dest.label)}</b> · arriving ${isNow ? 'now, ' : ''}${esc(when)} for ${stayLabel(stay)}<br>` +
       `${counts.free ?? 0} free · ${counts.paid ?? 0} paid · ${counts.no ?? 0} not allowed · ${counts.unknown ?? 0} to check` +
       warnings.map((w) => `<span class="warn">${esc(w)}</span>`).join(''),
-    '',
-    true,
   );
   $('.controls').hidden = false;
 
@@ -190,16 +229,26 @@ function cardHtml(o) {
     <div class="card-src">${SOURCE_LABELS[o.source]}${o.checked ? `, checked ${esc(o.checked)}` : ''}${o.link ? ` · <a href="${esc(o.link)}" target="_blank" rel="noopener">source</a>` : ''}</div>`;
 }
 
-function showStatus(message, kind = '', html = false) {
-  const el = $('#status');
-  el.className = `status ${kind}`;
-  if (html) el.innerHTML = message;
-  else el.textContent = message;
+function showStatus(html) {
+  $('#status').innerHTML = html;
+}
+
+function showProgress(message, kind = '') {
+  const el = $('#progress');
+  el.hidden = !message;
+  el.className = `progress ${kind}`;
+  el.textContent = message ?? '';
+  if (message && kind !== 'error') el.insertAdjacentHTML('afterbegin', '<span class="spinner" aria-hidden="true"></span>');
 }
 
 function setBusy(busy) {
   $('#go').disabled = busy;
+  $('#go').textContent = busy ? 'Searching…' : 'Find parking';
   $('#locate').disabled = busy;
+}
+
+function syncNowButton() {
+  $('#now').setAttribute('aria-pressed', String(!$('#arrive').value));
 }
 
 function saveToUrl(query) {
@@ -216,6 +265,7 @@ function restoreFromUrl() {
   for (const [key, sel] of [['stay', '#stay'], ['r', '#radius'], ['at', '#arrive']]) {
     if (params.has(key)) $(sel).value = params.get(key);
   }
+  syncNowButton();
   if (params.get('q')) {
     $('#q').value = params.get('q');
     search({ query: params.get('q') });

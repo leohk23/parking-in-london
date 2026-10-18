@@ -39,3 +39,31 @@ export async function geocode(query, { fetchImpl = fetch } = {}) {
     street: isRoad ? hit.name : null,
   };
 }
+
+/**
+ * Nearest address to a point, e.g. { label: '12 Wimbledon Park Road, SW19 6NL', street: 'Wimbledon Park Road' }.
+ * Falls back to the nearest postcode when there's no street address.
+ */
+export async function reverseGeocode([lat, lon], { fetchImpl = fetch, signal } = {}) {
+  try {
+    const params = new URLSearchParams({ format: 'jsonv2', lat, lon, zoom: '18', addressdetails: '1' });
+    const res = await fetchImpl(`https://nominatim.openstreetmap.org/reverse?${params}`, {
+      headers: { 'Accept-Language': 'en-GB' },
+      signal,
+    });
+    if (!res.ok) throw new Error(`Address lookup failed (${res.status})`);
+    const { address = {} } = await res.json();
+    const street = address.road ?? address.pedestrian ?? null;
+    const first = [address.house_number, street].filter(Boolean).join(' ') || address.neighbourhood || address.suburb;
+    const label = [first, address.postcode].filter(Boolean).join(', ');
+    if (!label) throw new Error('No address here');
+    return { label, street };
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    const res = await fetchImpl(`https://api.postcodes.io/postcodes?lon=${lon}&lat=${lat}&limit=1`, { signal });
+    if (!res.ok) throw new Error(`Postcode lookup failed (${res.status})`);
+    const { result } = await res.json();
+    if (!result?.length) throw new Error('No postcode here');
+    return { label: result[0].postcode, street: null };
+  }
+}
