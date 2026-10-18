@@ -18,11 +18,20 @@ npm start                    # serves on http://localhost:8080
 # or: python3 -m http.server 8080
 ```
 
-To use it on your phone, host the repo with GitHub Pages (Settings → Pages → deploy from branch) or any static host. Searches go in the URL (`?q=Wimbledon+Park+Road&stay=120`), so you can bookmark the places you go often.
-
 ```sh
 npm test                     # unit tests (Node 20+)
 ```
+
+## Put it on your phone (GitHub Pages)
+
+`.github/workflows/pages.yml` runs the tests on every pull request. On every push to `main` it also publishes the site to GitHub Pages, at `https://<user>.github.io/parking-in-london/`. To switch it on:
+
+1. GitHub Pages needs a **public repo**, unless your account is on GitHub Pro. To make it public: Settings → General → Danger Zone → Change visibility. Nothing in the repo is secret: there are no API keys.
+2. Settings → Pages → Build and deployment → Source: **GitHub Actions**.
+3. Push to `main`, or run the workflow from the Actions tab. The site URL appears on the workflow run.
+4. On your phone, open the URL and choose **Add to Home Screen**. It opens full-screen with its own icon.
+
+Searches go in the URL (`?q=Wimbledon+Park+Road&stay=120`), so you can bookmark the places you go often.
 
 ## Where the data comes from
 
