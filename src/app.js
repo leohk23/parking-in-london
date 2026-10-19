@@ -40,7 +40,7 @@ const layersById = new Map();
 // Leaflet stops clicks inside popups from reaching the page, so each popup's info button is bound when it opens.
 map.on('popupopen', (e) => bindInfo(e.popup.getElement()));
 
-// Map button that shows where you are, without changing the search.
+// Map button that follows where you are, live, without changing the search.
 const LOCATE_ICON =
   '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4" stroke="currentColor" stroke-width="2"/></svg>';
 const LocateControl = L.Control.extend({
@@ -50,13 +50,14 @@ const LocateControl = L.Control.extend({
     const link = L.DomUtil.create('a', 'map-locate', bar);
     link.href = '#';
     link.setAttribute('role', 'button');
-    link.title = 'Show my location';
-    link.setAttribute('aria-label', 'Show my location');
+    link.title = 'Follow my location';
+    link.setAttribute('aria-label', 'Follow my location');
+    link.setAttribute('aria-pressed', 'false');
     link.innerHTML = LOCATE_ICON;
     L.DomEvent.disableClickPropagation(bar);
     L.DomEvent.on(link, 'click', (e) => {
       L.DomEvent.preventDefault(e);
-      recenter(link);
+      toggleFollow(link);
     });
     return bar;
   },
@@ -188,29 +189,107 @@ async function locate() {
   await search({ dest: { label: place?.label ?? 'Your location', point, street: place?.street ?? null } });
 }
 
-async function recenter(link) {
+// Following: the blue dot moves as you do and the map stays centred on it,
+// until you drag the map. Tapping the button then centres it again; tapping
+// it while centred stops following. The screen is kept on meanwhile.
+let follow = null;
+
+function toggleFollow(link) {
+  if (follow && !follow.centred) {
+    follow.centred = true;
+    syncFollowButton();
+    if (follow.point) map.setView(follow.point, Math.max(map.getZoom(), 16));
+    return;
+  }
+  if (follow) return stopFollow();
   if (!navigator.geolocation) return showProgress("Location isn't available in this browser.", 'error');
+  follow = { link, centred: true, point: null, wakeLock: null };
   link.classList.add('busy');
+  follow.watchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      if (!follow) return;
+      const first = !follow.point;
+      follow.point = [pos.coords.latitude, pos.coords.longitude];
+      // Phones only know the direction while moving.
+      const moving = pos.coords.speed == null || pos.coords.speed > 1;
+      const heading = moving && Number.isFinite(pos.coords.heading) ? pos.coords.heading : null;
+      showYou({ point: follow.point, accuracy: pos.coords.accuracy, heading });
+      link.classList.remove('busy');
+      if (follow.centred) map.setView(follow.point, first ? Math.max(map.getZoom(), 16) : map.getZoom(), { animate: !first });
+      syncFollowButton();
+    },
+    (err) => {
+      // A slow fix isn't fatal while following: keep waiting for the next one.
+      if (err.code === 3 && follow?.point) return;
+      showProgress(locationError(err), 'error');
+      stopFollow();
+    },
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 },
+  );
+  keepScreenOn();
+  syncFollowButton();
+}
+
+function stopFollow() {
+  if (!follow) return;
+  navigator.geolocation.clearWatch(follow.watchId);
+  follow.wakeLock?.release().catch(() => {});
+  follow.link.classList.remove('busy');
+  const { link } = follow;
+  follow = null;
+  syncFollowButton(link);
+}
+
+function syncFollowButton(link = follow?.link) {
+  if (!link) return;
+  link.classList.toggle('active', Boolean(follow?.centred));
+  link.classList.toggle('paused', Boolean(follow && !follow.centred));
+  link.setAttribute('aria-pressed', String(Boolean(follow)));
+  link.title = !follow ? 'Follow my location' : follow.centred ? 'Stop following' : 'Centre on my location';
+  link.setAttribute('aria-label', link.title);
+}
+
+async function keepScreenOn() {
   try {
-    const here = await currentPosition();
-    showYou(here);
-    map.setView(here.point, Math.max(map.getZoom(), 16));
-  } catch (err) {
-    showProgress(locationError(err), 'error');
-  } finally {
-    link.classList.remove('busy');
+    if (follow && !follow.wakeLock && document.visibilityState === 'visible') {
+      const lock = await navigator.wakeLock?.request('screen');
+      if (!follow) return lock?.release();
+      follow.wakeLock = lock ?? null;
+      lock?.addEventListener('release', () => follow?.wakeLock === lock && (follow.wakeLock = null));
+    }
+  } catch {
+    // Not supported, or refused (e.g. low battery): the screen may sleep as usual.
   }
 }
 
-/** Blue dot for your position, with a faint circle for how accurate it is. */
-function showYou({ point, accuracy }) {
-  youLayer.clearLayers();
-  if (accuracy < 500) {
-    L.circle(point, { radius: accuracy, color: '#1d73e8', weight: 1, opacity: 0.4, fillOpacity: 0.08, interactive: false }).addTo(youLayer);
+// The browser drops the screen lock when the page is hidden; take it again on return.
+document.addEventListener('visibilitychange', keepScreenOn);
+// Dragging the map means you want to look around: stop centring until asked.
+map.on('dragstart', () => {
+  if (!follow?.centred) return;
+  follow.centred = false;
+  syncFollowButton();
+});
+
+/** Blue dot for your position, with a faint circle for how accurate it is and an arrow for your direction. */
+const you = { dot: null, circle: null };
+function showYou({ point, accuracy, heading = null }) {
+  if (!you.dot || !youLayer.hasLayer(you.dot)) {
+    youLayer.clearLayers();
+    you.circle = L.circle(point, { radius: accuracy, color: '#1d73e8', weight: 1, interactive: false }).addTo(youLayer);
+    const html = '<svg class="you-heading" viewBox="0 0 40 40" hidden><path d="M20 2 L27 14 L13 14 Z" fill="#1d73e8"/></svg><span class="you-dot"></span>';
+    const icon = L.divIcon({ className: 'you', html, iconSize: [40, 40], iconAnchor: [20, 20] });
+    you.dot = L.marker(point, { icon, keyboard: false, zIndexOffset: 1000 }).bindTooltip('You are here').addTo(youLayer);
   }
-  L.circleMarker(point, { radius: 7, color: '#fff', weight: 2, fillColor: '#1d73e8', fillOpacity: 1 })
-    .bindTooltip('You are here')
-    .addTo(youLayer);
+  you.dot.setLatLng(point);
+  you.circle.setLatLng(point).setRadius(accuracy);
+  you.circle.setStyle({ opacity: accuracy < 500 ? 0.4 : 0, fillOpacity: accuracy < 500 ? 0.08 : 0 });
+  // Updated in place, so the arrow turns smoothly rather than jumping.
+  const arrow = you.dot.getElement()?.querySelector('.you-heading');
+  if (arrow) {
+    arrow.hidden = heading == null;
+    if (heading != null) arrow.style.transform = `rotate(${Math.round(heading)}deg)`;
+  }
 }
 
 function currentPosition() {

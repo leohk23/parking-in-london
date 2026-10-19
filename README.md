@@ -51,6 +51,8 @@ OpenStreetMap's Overpass servers can be slow when busy. If the main server hasn'
 
 Recent destinations (the last six) are kept in the browser too, and shown when you tap the empty search box.
 
+The location button on the map follows you live: the blue dot moves (with an arrow for your direction while moving) and the map stays centred on it. Drag the map to look around, and tap the button to centre again; tap it once more to stop. The screen stays on while following. Like any website, it only gets your location while the page is open on screen.
+
 ### Checking a place against the live data
 
 ```sh

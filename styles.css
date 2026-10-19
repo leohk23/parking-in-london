@@ -463,6 +463,10 @@ button.busy::after,
   margin: 4px 0 10px;
 }
 
+.controls[hidden] {
+  display: none;
+}
+
 .controls label {
   display: flex;
   flex-direction: row;
@@ -711,8 +715,43 @@ button.info:focus-visible {
   color: #333;
 }
 
+/* Following your location: filled while centred, outlined after you drag the map. */
+.leaflet-bar a.map-locate.active {
+  color: #fff;
+  background: #1d73e8;
+}
+
+.leaflet-bar a.map-locate.paused {
+  color: #1d73e8;
+}
+
 .map-locate.busy svg {
   visibility: hidden;
+}
+
+.leaflet-marker-icon.you {
+  background: none;
+  border: 0;
+}
+
+.you-dot {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #1d73e8;
+  border: 2.5px solid #fff;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.15), 0 1px 4px rgb(0 0 0 / 0.3);
+}
+
+.you-heading {
+  position: absolute;
+  inset: 0;
+  width: 40px;
+  height: 40px;
+  transition: transform 0.4s;
 }
 
 .map-locate.busy::after {
