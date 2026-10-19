@@ -51,8 +51,9 @@ export const STREET_LISTS = [
   },
 ];
 
+/** "St. Andrew's Road" and "St Andrews Road" both become "st andrews road". */
 export function normaliseName(name) {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return name.toLowerCase().replace(/['’]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
 /** Whether a borough with a street list overlaps the area, i.e. street geometry is worth fetching. */
@@ -177,7 +178,7 @@ function streetIndex(list, data) {
 }
 
 function streetOption(list, data, key, entry, lines) {
-  const zones = [...new Set(entry.parts.map((p) => p.zone))];
+  const zones = [...new Set(entry.parts.filter((p) => !p.payOnly).map((p) => p.zone))];
   const areas = new Set(entry.parts.map((p) => p.area));
   const notes = Object.entries(list.areaNotes ?? {}).filter(([area]) => areas.has(area)).map(([, note]) => note);
   return {
@@ -185,7 +186,9 @@ function streetOption(list, data, key, entry, lines) {
     source: 'street-list',
     kind: 'street',
     title: entry.name,
-    subtitle: `${entry.locality ? `${entry.locality} · ` : ''}${list.borough} parking zone${zones.length > 1 ? 's' : ''} ${zones.join(', ')}`,
+    subtitle: `${entry.locality ? `${entry.locality} · ` : ''}${
+      zones.length ? `${list.borough} parking zone${zones.length > 1 ? 's' : ''} ${zones.join(', ')}` : `${list.borough} pay-to-park street`
+    }`,
     ...(lines.length && { lines }),
     parts: entry.parts.map(streetPart),
     notes: [ZONE_NOTE, ...notes],
@@ -205,9 +208,20 @@ function streetPart(p) {
       ? clip(p.section, 80)
       : p.blocks?.slice(0, 2).join(', ');
   const flags = [...new Set((p.notes ?? []).filter((n) => FLAG_RE.test(n)).map((n) => n.match(FLAG_RE)[0]))];
+  const ringgo = p.ringgo && `RingGo ${p.ringgo}`;
+  // Pay bays with no published hours: paid unless the sign says otherwise.
+  if (p.payOnly) {
+    return {
+      label: 'Pay bays',
+      detail: [where, p.cost, ringgo].filter(Boolean).join(' · '),
+      rules: [],
+      otherwise: { effect: 'paid', label: 'Pay to park: hours are on the signs' },
+      notes: p.notes ?? [],
+    };
+  }
   return {
     label: `Zone ${p.zone}`,
-    detail: [where, p.hours && shortDays(p.hours), p.permitOnly ? 'permit holders only' : p.cost, p.maxStay && `max ${p.maxStay}`, ...flags]
+    detail: [where, p.hours && shortDays(p.hours), p.permitOnly ? 'permit holders only' : p.cost, ringgo, p.maxStay && `max ${p.maxStay}`, ...flags]
       .filter(Boolean)
       .join(' · '),
     rules: schedule ? [{ when: schedule, effect: p.permitOnly ? 'permit' : 'controlled' }] : [],

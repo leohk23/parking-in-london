@@ -196,3 +196,42 @@ test('Kingston: a New Malden street outside every zone is free', () => {
   assert.deepEqual(outsideStreetLists(kingstonLists, { dest, council: 'Merton' }), []);
   assert.deepEqual(outsideStreetLists(kingstonLists, { dest: { point: NEW_MALDEN }, council: 'Kingston upon Thames' }), []);
 });
+
+test("Kingston's on-street charges: rates on zone streets, pay bays on New Malden High Street", async () => {
+  const { parseCharges, addCharges } = await import('../scripts/update-kingston.mjs');
+  const rows = parseCharges(
+    '<main><h1>On street parking charges</h1><table><tr><th>Area</th><th>Location code</th><th>Charge per hour</th></tr>' +
+      '<tr><td>CPZ S, Central Area, Including 30 min Free</td><td>26573</td><td>£3</td></tr>' +
+      '<tr><td>Queens Road, High Street New Malden</td><td>26525</td><td>£3</td></tr>' +
+      '<tr><td>Crescent Road, Queens Road</td><td>26516</td><td>£2.30</td></tr>' +
+      '<tr><td>Brighton Road, St.James Road, Victoria Road</td><td>26520</td><td>£3</td></tr>' +
+      '<tr><td>Church Road, Linden Crescent, Victoria Road</td><td>26544</td><td>£2.30</td></tr></table></main>',
+  );
+  // Area rows ("CPZ S, Central Area") can't be placed, so they're left out.
+  assert.deepEqual(rows.map((r) => r.code), ['26525', '26516', '26520', '26544']);
+  // The snapshot already has the charges; start from the zone pages alone.
+  const zonesOnly = Object.fromEntries(
+    Object.entries(structuredClone(kingston.streets))
+      .map(([name, parts]) => [name, parts.filter((p) => !p.payOnly).map(({ cost, ringgo, ...p }) => p)])
+      .filter(([, parts]) => parts.length),
+  );
+  const streets = addCharges(zonesOnly, rows);
+  assert.deepEqual(streets['High Street, New Malden'], [{ zone: 'Pay', area: 'Pay to park', payOnly: true, cost: '£3.00/hr', ringgo: '26525' }]);
+  // Queens Road in New Malden is a permit area with pay bays; in Kingston it's zone B.
+  assert.deepEqual(streets['Queens Road, New Malden'].map((p) => p.zone), ['DD', 'Pay']);
+  assert.equal(streets['Queens Road'][0].ringgo, '26516');
+  // Same-named Victoria Roads are told apart by the zones of the rest of each row.
+  assert.equal(streets['Victoria Road'][0].ringgo, '26520');
+  assert.equal(streets['Victoria Road, Kingston'][0].ringgo, '26544');
+  // "St.James Road" in the charges is "St. James’s Road" (zone S, Surbiton) in the zone pages.
+  assert.equal(streets['St. James’s Road'][0].ringgo, '26520');
+  assert.equal(streets["St. James's Road, Kingston"][0].ringgo, undefined);
+
+  const [high] = streetListOptions([{ list: KINGSTON, data: { ...kingston, streets } }], {
+    streets: [{ name: 'High Street', line: [[51.4021, -0.2562], [51.4012, -0.2551]] }],
+  });
+  assert.equal(high.subtitle, 'New Malden · Kingston pay-to-park street');
+  const result = evaluateOption(high, londonClock(new Date('2026-10-19T09:00:00Z')), 60).results[0];
+  assert.equal(result.status, 'paid');
+  assert.equal(result.detail, '£3.00/hr · RingGo 26525');
+});

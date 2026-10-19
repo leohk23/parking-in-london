@@ -41,7 +41,7 @@ London has no single open dataset of parking restrictions, so the app combines s
 | --- | --- | --- |
 | [OpenStreetMap](https://www.openstreetmap.org) via the Overpass API | All of London: car parks (fee and opening hours), plus street parking where mappers have tagged it | Street parking coverage is patchy. You can improve it yourself, e.g. with the StreetComplete app. |
 | Councils' own zone maps (`src/sources/council-zones.js`) | Every street in a borough: controlled parking zone boundaries with their days, hours and charges, queried live | Hammersmith & Fulham, Sutton and Merton. Inside one of these boroughs but outside every zone, the app says there's no parking zone (it checks the borough with postcodes.io). The council's map can lag behind recent changes, so the zone entry sign has the final word. |
-| Councils' street lists (`data/wandsworth.json`, `data/kingston.json`) | Every street in a parking zone, drawn on the map along OpenStreetMap's streets | **Wandsworth**: each street's zone, house numbers, hours, charge and maximum stay, from the council's CPZ street finder. **Kingston**, including New Malden: the streets in each zone and permit parking area, from the council's zone pages, with hours from its list of when the rules apply. A street that isn't on the list has no parking zone. |
+| Councils' street lists (`data/wandsworth.json`, `data/kingston.json`) | Every street in a parking zone, drawn on the map along OpenStreetMap's streets | **Wandsworth**: each street's zone, house numbers, hours, charge and maximum stay, from the council's CPZ street finder. **Kingston**, including New Malden: the streets in each zone and permit parking area, from the council's zone pages, with hours from its list of when the rules apply, and the hourly charge and RingGo code of each paid street from its on-street charges page (New Malden High Street is pay to park, for example). A street that isn't on the list has no parking zone. |
 | Councils' kerbside maps (`src/sources/kerbside.js`) | Yellow lines, bus stops, school markings and bays, with their times | Sutton so far. |
 | [Camden Council "Parking Bays"](https://opendata.camden.gov.uk/Transport/Parking-Bays/7hiv-3r9k) | Every on-street bay in Camden, with type, times, max stay and tariff | Loaded only when you search in or near Camden. |
 
@@ -66,6 +66,8 @@ It prints the geocoder's matches, how much street-parking detail OpenStreetMap h
 ### Councils' street lists
 
 Wandsworth's and Kingston's websites can't be read from a browser, so `scripts/update-wandsworth.mjs` and `scripts/update-kingston.mjs` copy their lists into `data/`. The deploy workflow runs them before every deploy and every Monday morning, so the site stays current without commits. If a council's site is down, the copy in the repo is published instead. To refresh the copy in the repo, run the scripts on your computer and commit the result.
+
+The government's [Digital Traffic Regulation Order service](https://www.gov.uk/guidance/digital-traffic-regulation-orders-d-tro-service) should eventually carry every council's bays, hours and limits through one free API, but it needs a registered account and few councils publish to it yet.
 
 Kingston writes its zone hours as prose, so they're kept in `ZONES` in `scripts/update-kingston.mjs`. When the council adds a zone, the script warns and the app shows its streets as "hours on the signs" until the hours are added there.
 

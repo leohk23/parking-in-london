@@ -13,8 +13,12 @@ import { normaliseName } from '../src/sources/street-lists.js';
 const SITE = 'https://www.kingston.gov.uk';
 const DIRECTORY = `${SITE}/parking/parking-zones`;
 const HOURS_PAGE = `${SITE}/parking/find-street-parking`;
+const CHARGES_PAGE = `${SITE}/parking/how-to-pay-for-parking/on-street-parking-charges`;
 const OUT = new URL('../data/kingston.json', import.meta.url);
 const LOCALITIES = ['New Malden', 'Kingston', 'Surbiton', 'Tolworth', 'Norbiton', 'Chessington'];
+// Misspellings on the council's pages, corrected so they match each other and OpenStreetMap.
+const SPELLINGS = { 'Angelsea Road': 'Anglesea Road', 'Cheaham Road': 'Chesham Road' };
+const spell = (name) => SPELLINGS[name] ?? name;
 
 // From HOURS_PAGE, checked 2026-10-19. Each zone's hours, and the streets in it
 // whose hours differ. Permit parking areas (D...) are for permit holders only;
@@ -121,7 +125,7 @@ export function parseZonePage(html) {
 /** "Cambridge Road, Kingston Nos 3 to 39 (odd numbers only)" → name, locality and the part of the road. */
 export function parseStreet(item) {
   const cut = /\s*(?:,|\(|\s-\s|\s(?:nos?\.?|odd|even|between|from)\s|\s(?:north|south|east|west)(?:-(?:east|west))?\s+side\b)/i.exec(item);
-  const name = (cut ? item.slice(0, cut.index) : item).trim();
+  const name = spell((cut ? item.slice(0, cut.index) : item).trim());
   let rest = cut ? item.slice(cut.index).replace(/^\s*,?\s*/, '') : '';
   const locality = LOCALITIES.find((l) => rest === l || rest.startsWith(`${l} `)) ?? '';
   rest = rest.slice(locality.length).trim().replace(/^[-–]\s*/, '');
@@ -157,6 +161,71 @@ export function buildStreets(pages) {
   return Object.fromEntries(Object.entries(streets).sort(([a], [b]) => a.localeCompare(b)));
 }
 
+/**
+ * The on-street charges table: "Queens Road, High Street New Malden | 26525 | £3".
+ * Rows that name an area rather than streets ("CPZ S, Central Area", "Tolworth
+ * 2 Hour Stay") can't be placed on the map, so they're left out.
+ */
+export function parseCharges(html) {
+  const body = text(mainContent(html));
+  const header = body.search(/charge per hour/i);
+  const pieces = body.slice(header < 0 ? 0 : header + 'charge per hour'.length).split(/\s(\d{5})\s+£(\d+(?:\.\d{1,2})?)/);
+  const rows = [];
+  for (let i = 0; i + 2 < pieces.length; i += 3) {
+    let area = pieces[i].trim();
+    if (!area || /\bCPZ\b|\bstay\b|\d\s*hours?\b|bus lane/i.test(area)) continue;
+    // "High Street New Malden": the locality applies to the whole row.
+    const locality = LOCALITIES.find((l) => area.endsWith(` ${l}`)) ?? '';
+    if (locality) area = area.slice(0, -locality.length).trim();
+    const streets = area.split(/\s*,\s*/).filter(Boolean).map((s) => {
+      const m = /^(.*?)\s*\((.*)\)$/.exec(s);
+      return { name: spell((m ? m[1] : s).replace(/^St\.(?=\S)/, 'St. ')), section: m?.[2] ?? '', locality };
+    });
+    rows.push({ code: pieces[i + 1], cost: `£${Number(pieces[i + 2]).toFixed(2)}/hr`, streets });
+  }
+  return rows;
+}
+
+/**
+ * Adds each paid street's hourly charge and RingGo code to its zone rules, or
+ * as pay bays where the street's only rules are for permit holders (or it has
+ * none, like New Malden High Street). Same-named roads are told apart by the
+ * zones of the other streets in the row.
+ */
+export function addCharges(streets, rows) {
+  // Loose enough that "St.James Road" finds "St. James's Road" and "Oak Hill Road" finds "Oakhill Road".
+  const loose = (name) => normaliseName(name).replace(/s+\b/g, '').replace(/ /g, '');
+  const byBase = new Map();
+  for (const key of Object.keys(streets)) {
+    const base = loose(key.replace(new RegExp(`, (${LOCALITIES.join('|')})$`), ''));
+    if (!byBase.has(base)) byBase.set(base, []);
+    byBase.get(base).push(key);
+  }
+  for (const row of rows) {
+    const candidates = row.streets.map((s) => {
+      const keys = byBase.get(loose(s.name)) ?? [];
+      const exact = s.locality ? keys.filter((k) => k.endsWith(`, ${s.locality}`)) : keys;
+      return { street: s, keys: exact };
+    });
+    const rowZones = new Set(candidates.filter((c) => c.keys.length === 1).flatMap((c) => streets[c.keys[0]].map((p) => p.zone)));
+    for (const { street, keys } of candidates) {
+      const key =
+        keys.length > 1
+          ? keys.find((k) => streets[k].some((p) => rowZones.has(p.zone))) ?? keys[0]
+          : keys[0] ?? (street.locality ? `${street.name}, ${street.locality}` : street.name);
+      const parts = (streets[key] ??= []);
+      // A charge for one stretch ("Portsmouth Road (Anglers Green)") is pay bays there, not the whole road's rate.
+      const paid = street.section ? [] : parts.filter((p) => !p.permitOnly && !p.payOnly);
+      if (paid.length) {
+        for (const p of paid) Object.assign(p, { cost: row.cost, ringgo: row.code });
+      } else {
+        parts.push({ zone: 'Pay', area: 'Pay to park', payOnly: true, cost: row.cost, ringgo: row.code, ...(street.section && { section: street.section }) });
+      }
+    }
+  }
+  return Object.fromEntries(Object.entries(streets).sort(([a], [b]) => a.localeCompare(b)));
+}
+
 async function main() {
   const links = new Set();
   for (let page = 0; page < 5; page++) {
@@ -171,7 +240,10 @@ async function main() {
   }
   if (pages.length < 15) throw new Error(`only ${pages.length} zone pages: the site layout may have changed`);
   console.log(`${pages.length} zones: ${pages.map((p) => `${p.code} (${p.streets.length})`).join(', ')}`);
-  await saveList(OUT, { borough: 'Royal Borough of Kingston upon Thames', source: HOURS_PAGE, streets: buildStreets(pages) });
+  const charges = parseCharges(await get(CHARGES_PAGE));
+  if (charges.length < 20) throw new Error(`only ${charges.length} rows of charges: the page layout may have changed`);
+  console.log(`${charges.length} rows of on-street charges.`);
+  await saveList(OUT, { borough: 'Royal Borough of Kingston upon Thames', source: HOURS_PAGE, streets: addCharges(buildStreets(pages), charges) });
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
