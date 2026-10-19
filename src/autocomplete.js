@@ -1,6 +1,6 @@
-// The dropdown under the destination box. With fewer than 3 characters typed
-// it lists recent searches; after that, suggestions appear 300 ms after typing
-// stops. Arrow keys move, Enter picks, Escape closes. Picking calls onPick
+// The dropdown above the destination box. Tapping the box, or typing fewer
+// than 3 characters, lists recent searches; after that, suggestions appear
+// 300 ms after typing stops. Arrow keys move, Enter picks, Escape closes. Picking calls onPick
 // with { label, point, street }.
 
 import { fetchSuggestions } from './suggest.js';
@@ -117,10 +117,14 @@ export function attachSuggestions(input, list, { onPick, recent, fetchImpl, dela
     }
   });
 
+  // Tapping the box opens the recent searches straight away, even when it still
+  // shows the last place; its text is selected so typing replaces it. Suggestions
+  // still waiting for the text you were typing come back instead.
   input.addEventListener('focus', () => {
     const q = input.value.trim();
-    if (q.length < 3) showRecent();
-    else if (items.length && q !== pickedLabel) renderItems();
+    if (items.length && !showingRecent && q.length >= 3 && q !== pickedLabel) renderItems();
+    else showRecent();
+    if (q) setTimeout(() => document.activeElement === input && input.select(), 0);
   });
   input.addEventListener('blur', () => setTimeout(close, 150));
 
