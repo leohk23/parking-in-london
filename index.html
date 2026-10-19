@@ -14,9 +14,11 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <!-- First in the page for keyboards and screen readers; shown at the bottom of the screen. -->
     <header class="top">
       <h1 class="visually-hidden">Park Nearby</h1>
       <form id="search" autocomplete="off">
+        <p id="progress" class="progress" role="status" aria-live="polite" hidden></p>
         <div class="row search-row">
           <span class="logo" aria-hidden="true">P</span>
           <input id="q" name="q" type="search" placeholder="Where are you going?" aria-label="Destination" autocomplete="off" required />
@@ -42,7 +44,6 @@
             </label>
           </div>
         </div>
-        <p id="progress" class="progress" role="status" aria-live="polite" hidden></p>
       </form>
     </header>
 
@@ -69,10 +70,15 @@
         <ol id="list" class="list"></ol>
         <p class="disclaimer">
           Always check the signs on the street: they override anything shown here. Data from
-          OpenStreetMap contributors, Camden Council open data and council zone pages (see each result).
+          OpenStreetMap contributors and council open data and websites (tap ⓘ on a result).
         </p>
       </section>
     </main>
+
+    <dialog id="info" class="info-dialog" aria-labelledby="info-title">
+      <form method="dialog"><button class="close secondary" aria-label="Close">✕</button></form>
+      <div id="info-body"></div>
+    </dialog>
 
     <script src="vendor/leaflet/leaflet.js"></script>
     <script type="module" src="src/app.js"></script>

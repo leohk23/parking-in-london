@@ -68,7 +68,7 @@ test('only boroughs near the search are queried', async () => {
   assert.match(urls[0], /LBHF\/INSPIRE\/MapServer\/10\/query\?geometry=-0\.25/);
   assert.match(urls[0], /outSR=4326.*f=geojson/);
 
-  const far = await fetchCouncilZones(bboxAround([51.44, -0.204], 500), { fetchImpl });
+  const far = await fetchCouncilZones(bboxAround([51.539, -0.1426], 500), { fetchImpl }); // Camden Town
   assert.equal(far.skipped, true);
   assert.equal(urls.length, 1);
 });
@@ -76,4 +76,35 @@ test('only boroughs near the search are queried', async () => {
 test('service errors are reported', async () => {
   const fetchImpl = async () => ({ ok: true, json: async () => ({ error: { code: 400, message: 'Invalid query' } }) });
   await assert.rejects(fetchCouncilZones(bboxAround(STAMFORD_COURT, 500), { fetchImpl }), /Invalid query/);
+});
+
+const MERTON = ZONE_LAYERS.find((l) => l.id === 'merton');
+// Attributes as Merton's zone map returns them.
+const merton = {
+  type: 'FeatureCollection',
+  features: [
+    {
+      properties: { Zone_ID: 'W3', Zone_Area: 'Wimbledon Town Centre', Zone_Type: 'Charges Apply', Operation_Summary: 'Mon-Sat 8:30am - 11:00pm; Sun & Bank Holidays 2:00pm - 6:00pm' },
+      geometry: { type: 'Polygon', coordinates: square(51.4214, -0.2064, 0.002) },
+    },
+    {
+      properties: { Zone_ID: 'SW1', Zone_Area: 'South Wimbledon', Zone_Type: 'Permit Holders', Operation_Summary: 'Mon-Sat 8:30am - 6:30pm' },
+      geometry: { type: 'Polygon', coordinates: square(51.415, -0.19, 0.002) },
+    },
+    {
+      properties: { Zone_ID: null, Zone_Area: null, Zone_Type: 'Pay and Display Only Zone', Operation_Summary: 'Pay and Display Only' },
+      geometry: { type: 'Polygon', coordinates: square(51.402, -0.195, 0.002) },
+    },
+  ],
+};
+
+test('Merton zones: Sunday hours, permit-only zones and the pay and display area', () => {
+  const [w3, sw1, pd] = parseZones(merton, MERTON);
+  assert.equal(w3.title, 'Zone W3');
+  assert.equal(w3.subtitle, 'Wimbledon Town Centre · Merton controlled parking zone');
+  const sunday = londonClock(new Date('2026-10-18T11:00:00Z')); // Sun 12:00 BST
+  assert.equal(evaluateOption(w3, sunday, 60).results[0].summary, 'Free until 14:00, then pay or permit');
+  assert.equal(sw1.parts[0].rules[0].effect, 'permit');
+  assert.equal(pd.title, 'Pay and display area');
+  assert.equal(pd.parts[0].otherwise.effect, 'unknown');
 });

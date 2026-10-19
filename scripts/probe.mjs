@@ -14,10 +14,11 @@ import { overpassQuery, parseOsm, firstSuccessful, OVERPASS_URLS } from '../src/
 import { fetchCamden } from '../src/sources/camden.js';
 import { fetchCouncilZones, outsideZones } from '../src/sources/council-zones.js';
 import { fetchKerbside } from '../src/sources/kerbside.js';
-import { zoneOptions, normaliseName } from '../src/sources/zones.js';
+import { streetListOptions, outsideStreetLists, normaliseName, STREET_LISTS } from '../src/sources/street-lists.js';
+import { readFileSync } from 'node:fs';
 import { evaluateOption, STATUS_RANK } from '../src/evaluate.js';
 import { londonClock } from '../src/schedule.js';
-import { bboxAround, distanceToOption } from '../src/geo.js';
+import { bboxAround, bboxesOverlap, distanceToOption } from '../src/geo.js';
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -82,8 +83,13 @@ for (const [k, n] of Object.entries(keyCounts).sort((a, b) => b[1] - a[1]).slice
 
 const camden = await fetchCamden(area, { fetchImpl }).catch((err) => ({ options: [], error: err.message }));
 console.log(`Camden bays: ${camden.skipped ? 'outside Camden' : camden.error ? `failed (${camden.error})` : camden.options.length}`);
-const zones = zoneOptions(osm.streets);
-console.log(`Council zone streets (data/zones.js): ${zones.length}`);
+// The app fetches these files from the site; here they're read from data/.
+const lists = STREET_LISTS.filter((list) => bboxesOverlap(area, list.bbox)).map((list) => ({
+  list,
+  data: JSON.parse(readFileSync(new URL(`../data/${list.id}.json`, import.meta.url), 'utf8')),
+}));
+const zones = [...streetListOptions(lists, { streets: osm.streets, dest }), ...outsideStreetLists(lists, { dest, council: council?.admin_district })];
+console.log(`Council street lists: ${lists.length ? `${zones.length} streets (${lists.map((l) => l.list.borough).join(', ')})` : 'no borough list here'}`);
 const councilZones = await fetchCouncilZones(area, { fetchImpl }).catch((err) => ({ options: [], error: err.message }));
 councilZones.options.push(...outsideZones(councilZones, council?.admin_district, dest.point));
 const kerbside = await fetchKerbside(area, { fetchImpl }).catch((err) => ({ options: [], error: err.message }));

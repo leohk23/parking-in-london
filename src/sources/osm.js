@@ -34,7 +34,7 @@ const PARKING_TYPES = {
 
 /**
  * `streets` adds every named road's geometry, which is only needed where
- * hand-maintained zone data (data/zones.js) has streets to draw.
+ * a council street list (src/sources/street-lists.js) has streets to draw.
  */
 export function overpassQuery([s, w, n, e], { street, center, streets = true } = {}) {
   const bbox = `${s},${w},${n},${e}`;
