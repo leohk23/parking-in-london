@@ -13,6 +13,7 @@ export async function geocode(query, { fetchImpl = fetch } = {}) {
     const res = await fetchImpl(`https://api.postcodes.io/postcodes/${encodeURIComponent(q)}`);
     if (res.ok) {
       const { result } = await res.json();
+      if (result.region !== 'London') throw new Error(`${result.postcode} is outside Greater London`);
       return { label: result.postcode, point: [result.latitude, result.longitude], street: null };
     }
     if (res.status !== 404) throw new Error(`Postcode lookup failed (${res.status})`);
@@ -20,7 +21,9 @@ export async function geocode(query, { fetchImpl = fetch } = {}) {
 
   const params = new URLSearchParams({
     format: 'jsonv2',
-    limit: '1',
+    // The box takes in some places outside Greater London too: pick the first inside it.
+    limit: '5',
+    addressdetails: '1',
     countrycodes: 'gb',
     viewbox: LONDON_VIEWBOX,
     bounded: '1',
@@ -30,14 +33,18 @@ export async function geocode(query, { fetchImpl = fetch } = {}) {
     headers: { 'Accept-Language': 'en-GB' },
   });
   if (!res.ok) throw new Error(`Place search failed (${res.status})`);
-  const [hit] = await res.json();
-  if (!hit) throw new Error(`Couldn't find "${q}" in London`);
+  const hit = (await res.json()).find(inGreaterLondon);
+  if (!hit) throw new Error(`Couldn't find "${q}" in Greater London`);
   const isRoad = (hit.category ?? hit.class) === 'highway';
   return {
     label: hit.display_name.split(', ').slice(0, 3).join(', '),
     point: [Number(hit.lat), Number(hit.lon)],
     street: isRoad ? hit.name : null,
   };
+}
+
+function inGreaterLondon(hit) {
+  return hit.address?.['ISO3166-2-lvl6'] === 'GB-LND' || /\bGreater London\b/.test(hit.display_name ?? '');
 }
 
 /**

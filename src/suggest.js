@@ -1,6 +1,6 @@
 // Place suggestions while typing, following the office picker in
 // Where-to-live-in-London: Photon (built for search-as-you-type) limited to
-// London, trying "and"/"&" and ", London" variants, with duplicates removed.
+// Greater London, trying "and"/"&" and ", London" variants, with duplicates removed.
 // Postcode-shaped input goes to postcodes.io, which understands partial
 // postcodes. Nominatim isn't used here: its usage policy rules out autocomplete.
 
@@ -43,11 +43,13 @@ export function queryVariants(query) {
 }
 
 async function fetchPhotonSuggestions(q, fetchImpl, signal) {
-  const params = new URLSearchParams({ q, limit: String(LIMIT), lang: 'en', bbox: LONDON_BBOX });
+  // The box takes in some of Surrey, Kent, Essex and Hertfordshire too: ask for
+  // more, and keep Greater London's.
+  const params = new URLSearchParams({ q, limit: String(LIMIT * 3), lang: 'en', bbox: LONDON_BBOX });
   const res = await fetchImpl(`https://photon.komoot.io/api/?${params}`, { signal });
   if (!res.ok) return [];
   const { features = [] } = await res.json();
-  return features.map((f) => {
+  return features.filter((f) => f.properties?.county === 'Greater London').slice(0, LIMIT).map((f) => {
     const p = f.properties ?? {};
     const [lon, lat] = f.geometry.coordinates;
     return {
@@ -75,7 +77,7 @@ async function fetchPostcodeSuggestions(q, fetchImpl, signal) {
   if (!res.ok) return [];
   const { result } = await res.json();
   return (result ?? [])
-    .filter((r) => r.latitude != null)
+    .filter((r) => r.latitude != null && r.region === 'London')
     .map((r) => ({
       label: [r.postcode, r.admin_ward].filter(Boolean).join(', '),
       point: [r.latitude, r.longitude],

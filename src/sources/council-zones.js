@@ -24,7 +24,8 @@ const EVENT_RE = /event|occasion/i;
 // "outside every zone" apart from "in another borough"; it's left out where the
 // map may miss newer zones. A layer's `read` turns a feature's properties into
 // { zone | title, area?, hours, when? (the hours to go by, when they differ from
-// those shown), cost?, permitOnly?, unknown?, notes? }.
+// those shown), cost?, permitOnly?, unknown?, eventOnly? (controlled on event
+// days only), notes? }.
 export const ZONE_LAYERS = [
   {
     id: 'lbhf',
@@ -189,10 +190,29 @@ export const ZONE_LAYERS = [
         title: p.zone ? undefined : name,
         area: p.zone ? name : undefined,
         hours: p.hours ?? '',
-        unknown: /event day/i.test(name) ? 'Controlled on Spurs event days: check the signs' : 'Hours are on the zone entry signs',
+        eventOnly: /event day/i.test(name),
+        unknown: 'Hours are on the zone entry signs',
       };
     },
     link: 'https://enfield.traffweb.app/',
+  },
+  {
+    id: 'islington',
+    borough: 'Islington',
+    district: 'Islington',
+    bbox: [51.515, -0.145, 51.578, -0.075],
+    url: () => copied('islington'),
+    read: (p) => ({ zone: p.zone, area: p.area, hours: p.hours, notes: p.notes }),
+    link: 'https://www.islington.gov.uk/parking/parking-restrictions/controlled-parking-zones',
+  },
+  {
+    id: 'haringey',
+    borough: 'Haringey',
+    district: 'Haringey',
+    bbox: [51.562, -0.175, 51.612, -0.04],
+    url: () => copied('haringey'),
+    read: (p) => ({ title: p.area, hours: p.hours, eventOnly: p.eventOnly, notes: p.notes }),
+    link: 'https://haringey.gov.uk/parking/cpzs/all-cpz-hours',
   },
 ];
 
@@ -273,7 +293,7 @@ export function parseZones(json, layer) {
   });
 }
 
-function zoneOption(layer, { zone, title, area, hours, when, cost, permitOnly, unknown, notes = [] }, polygons, link) {
+function zoneOption(layer, { zone, title, area, hours, when, cost, permitOnly, unknown, eventOnly, notes = [] }, polygons, link) {
   const schedule = parseSchedule(when ?? hours);
   return {
     id: `zone-${layer.id}-${zone ?? title}`,
@@ -288,7 +308,11 @@ function zoneOption(layer, { zone, title, area, hours, when, cost, permitOnly, u
         label: '',
         detail: [hours, cost].filter(Boolean).join(' · '),
         rules: schedule ? [{ when: schedule, effect: permitOnly ? 'permit' : 'controlled' }] : [],
-        otherwise: schedule ? { effect: 'free' } : { effect: 'unknown', label: unknown ?? `Hours not recognised: ${hours}` },
+        otherwise: schedule
+          ? { effect: 'free' }
+          : eventOnly
+            ? { effect: 'free', label: 'Free except on event days: check the signs' }
+            : { effect: 'unknown', label: unknown ?? `Hours not recognised: ${hours}` },
         notes: [],
       },
     ],

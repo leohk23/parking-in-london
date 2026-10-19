@@ -55,13 +55,24 @@ test('reverse geocoding fails cleanly when nothing is found', async () => {
 
 test('postcodes go to postcodes.io, places to Nominatim', async () => {
   const { fetchImpl } = fakeFetch({
-    'https://api.postcodes.io/postcodes/': { body: { result: { postcode: 'SW19 6NL', latitude: 51.44, longitude: -0.2 } } },
+    'https://api.postcodes.io/postcodes/': { body: { result: { postcode: 'SW19 6NL', region: 'London', latitude: 51.44, longitude: -0.2 } } },
     'https://nominatim.openstreetmap.org/search': {
-      body: [{ lat: '51.444', lon: '-0.204', category: 'highway', name: 'Wimbledon Park Road', display_name: 'Wimbledon Park Road, Southfields, London, UK' }],
+      body: [{ lat: '51.444', lon: '-0.204', category: 'highway', name: 'Wimbledon Park Road', display_name: 'Wimbledon Park Road, Southfields, London Borough of Wandsworth, London, Greater London, England, United Kingdom' }],
     },
   });
   assert.deepEqual(await geocode('sw19 6nl', { fetchImpl }), { label: 'SW19 6NL', point: [51.44, -0.2], street: null });
   const road = await geocode('Wimbledon Park Road', { fetchImpl });
   assert.equal(road.street, 'Wimbledon Park Road');
-  assert.equal(road.label, 'Wimbledon Park Road, Southfields, London');
+  assert.equal(road.label, 'Wimbledon Park Road, Southfields, London Borough of Wandsworth');
+});
+
+test('places and postcodes outside Greater London are refused', async () => {
+  const { geocode } = await import('../src/geocode.js');
+  const reply = (body) => ({ ok: true, status: 200, json: async () => body });
+  const fetchImpl = async (url) =>
+    url.includes('postcodes.io')
+      ? reply({ result: { postcode: 'KT17 1AA', region: 'South East', latitude: 51.33, longitude: -0.27 } })
+      : reply([{ lat: '51.33', lon: '-0.27', display_name: 'Epsom High Street, Epsom, Surrey, England, United Kingdom', address: { 'ISO3166-2-lvl6': 'GB-SRY' } }]);
+  await assert.rejects(geocode('KT17 1AA', { fetchImpl }), /outside Greater London/);
+  await assert.rejects(geocode('Epsom High Street', { fetchImpl }), /in Greater London/);
 });
