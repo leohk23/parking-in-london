@@ -154,3 +154,44 @@ test("Haringey's hours, with event days kept apart", async () => {
   );
   assert.equal(evaluateOption(zone, monday, 60).results[0].summary, 'Free except on event days: check the signs');
 });
+
+test("Brent's zones: the council's table wins, and zones yet to start are left out", async () => {
+  const { brentZone, brentTable } = await import('../scripts/build-kerb-tiles.mjs');
+  const table = brentTable(`<table><tr><td>Zone</td><td>Hours</td></tr>
+    <tr><td>KH</td><td>&nbsp;8.30am - 6.30pm Monday - Friday</td></tr>
+    <tr><td>KG</td><td>8.30am - 6.30pm Monday - Friday (see notes below)</td></tr>
+    <tr><td>KR</td><td>8.30am - 6.30pm Monday - Friday</td></tr><tr><td>KR</td><td>8.30am - 9.00pm Monday - Sunday (Victor Road and Napier Road only)</td></tr></table>`);
+  assert.deepEqual(table, { KH: '8.30am - 6.30pm Monday - Friday', KG: '8.30am - 6.30pm Monday - Friday' });
+  const geometry = { type: 'Polygon', coordinates: [[[-0.25, 51.55], [-0.24, 51.55], [-0.24, 51.56], [-0.25, 51.55]]] };
+  const zone = (properties) => brentZone({ properties, geometry }, table, new Date('2026-10-19'))?.properties;
+  assert.equal(zone({ CPZ: 'KH', Operational: '12.00 am - 3.00 pm Mon. - Fri', operational_days: 'Monday - Friday', operational_times: '12am - 3pm' }).hours, '8.30am - 6.30pm Monday - Friday');
+  const kr = zone({ CPZ: 'KR_2', Operational: '8.30 am - 9.00pm Mon. - Sun.', 'August ban': 'Monday. 8.30 am - 10.30 pm' });
+  assert.equal(kr.hours, '8.30 am - 9.00pm Mon. - Sun');
+  assert.deepEqual(kr.notes, ['Also over the August bank holiday weekend: Monday 8.30 am - 10.30 pm.']);
+  const school = zone({ CPZ: 'SZ2 (Annesley Close)', Operational: '8.15 am - 9.15 am & 2.30 pm - 4.00 pm Mon. - Fri (School Street Zone)', operational_days: 'Monday - Friday', operational_times: '8.15am - 9.15am & 2.30pm - 4pm' });
+  assert.deepEqual([school.zone, school.area, school.hours], ['SZ2', 'Annesley Close', 'Monday - Friday 8.15am - 9.15am & 2.30pm - 4pm']);
+  assert.deepEqual(zone({ CPZ: 'NC2', Operational: '8.00 am - 6.30 pm Mon. - Sat. On event days 8am -' }).notes, ['Extra controls on Wembley event days: check the signs.']);
+  assert.equal(zone({ CPZ: 'AB', status: 'To start on 21st Nov 26', Operational: '8.30am-6.30pm, Mon-Fri' }), undefined);
+});
+
+test("Lewisham's two-part hours and Greenwich's labels", async () => {
+  const { lewishamZone, greenwichZone, greenwichRecord } = await import('../scripts/build-kerb-tiles.mjs');
+  const wkt = 'MULTIPOLYGON (((-0.02 51.46, -0.01 51.46, -0.01 51.47, -0.02 51.46)))';
+  const s = lewishamZone({ zone_id: 'S', zone_name: 'Deptford Central', operatingd: 'Mon-Fri/Sat', operatingt: '9am-6pm/9am-1.30pm' }, wkt);
+  assert.deepEqual(s.properties, { zone: 'S', area: 'Deptford Central', hours: 'Mon-Fri 9am-6pm; Sat 9am-1.30pm' });
+  assert.deepEqual(s.geometry.coordinates[0][0][0], [-0.02, 51.46]);
+
+  const record = greenwichRecord('<dl><dt>Zone name</dt><dd>Greenwich Town Centre</dd><dt>Zone code</dt><dd>G</dd><dt>Days of operation</dt><dd>Monday to Sunday</dd><dt>Times of operation</dt><dd>Monday to Saturday 9am to 5pm, Sunday 9am to 6pm</dd></dl>');
+  assert.deepEqual(record, { code: 'G', name: 'Greenwich Town Centre', hours: 'Monday to Saturday 9am to 5pm, Sunday 9am to 6pm' });
+  const geometry = { type: 'MultiPolygon', coordinates: [[[[0.0, 51.48], [0.01, 51.48], [0.01, 51.49], [0.0, 51.48]]]] };
+  const feature = (CPZ, code, optim, text) => ({ properties: { CPZ, 'CPZ_eligbility_namelist_zoneinfo_CPZ code': code, CPZ_eligbility_namelist_zoneinfo_CPZ_optim: optim, CPZ_eligbility_namelist_zoneinfo_Text: text }, geometry });
+  assert.deepEqual(greenwichZone(feature('EX-HATCH-PERMIT-ELIGIBLE-CPZ-GREENWICH TOWN CENTRE-G', 'G', 'MON-SAT 9am-5pm_SUN 9am-6pm'), { G: record }).properties, {
+    zone: 'G', area: 'Greenwich Town Centre', hours: 'Monday to Saturday 9am to 5pm, Sunday 9am to 6pm',
+  });
+  // The label has Abbey Wood's two zones swapped; the code field goes with the hours.
+  assert.deepEqual(greenwichZone(feature('EX-HATCH-PERMIT-ELIGIBLE-CPZ-ABBEY WOOD-AW', 'AO', 'MON-FRI_9am-11am', 'Abbey Wood Outer')).properties, {
+    zone: 'AO', area: 'Abbey Wood Outer', hours: 'MON-FRI 9am-11am',
+  });
+  assert.equal(greenwichZone(feature('EX-HATCH-PERMIT-ELIGIBLE-CPZ-LB BEXLEY-ABBEY WOOD-AW', 'AW*', 'MON-FRI_11am-1pm')), null);
+  assert.equal(greenwichZone(feature('Exempt')), null);
+});

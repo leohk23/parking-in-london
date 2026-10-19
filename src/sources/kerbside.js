@@ -30,6 +30,9 @@ export const KERB_LAYERS = [
   tiled('redbridge', 'Redbridge', [51.542, 0.01, 51.627, 0.151], 'https://redbridge.traffweb.app/'),
   tiled('barking-dagenham', 'Barking & Dagenham', [51.517, 0.064, 51.599, 0.186], 'https://barking-dagenham.traffweb.app/'),
   tiled('waltham-forest', 'Waltham Forest', [51.549, -0.057, 51.649, 0.026], 'https://walthamforest.traffweb.app/'),
+  tiled('lewisham', 'Lewisham', [51.415, -0.076, 51.495, 0.042], 'https://lewisham.traffweb.app/'),
+  tiled('greenwich', 'Greenwich', [51.423, -0.031, 51.511, 0.125], 'https://greenwich.traffweb.app/'),
+  tiled('bexley', 'Bexley', [51.407, 0.073, 51.513, 0.213], 'https://bexley.traffweb.app/'),
   tiled('westminster', 'Westminster', [51.481, -0.218, 51.541, -0.108], 'https://www.westminster.gov.uk/parking/parking-zones-and-prices'),
 ];
 
@@ -146,17 +149,17 @@ export function kerbPart(text, type = '') {
     const who = /ambulance|doctor|police|taxi|coach|motorcycle|diplomat/.exec(t)[0];
     rule = { effect: 'restricted', label: `${{ ambulance: 'Ambulances', doctor: 'Doctors', police: 'Police', taxi: 'Taxis', coach: 'Coaches', motorcycle: 'Motorcycles', diplomat: 'Diplomats' }[who]} only` };
   }
-  else if (/zig.?zag|keep clear|crossing|pelican|puffin|toucan|h-bar/.test(t)) rule = { effect: 'no-parking', label: 'No stopping (school or crossing markings)' };
+  else if (/zig.?zag|keep clear|crossing|pelican|puffin|toucan|h.?bar/.test(t)) rule = { effect: 'no-parking', label: 'No stopping (school or crossing markings)' };
   else if (/bus stop|bus stand|clearway|no stopping/.test(t)) rule = { effect: 'no-parking', label: 'No stopping' };
-  else if (/no waiting|no loading|double yellow|single yellow|boxed junction|box junction/.test(t)) rule = { effect: 'no-parking' };
+  // "NWAAT": no waiting at any time.
+  else if (/no waiting|no loading|nwaat|double yellow|single yellow|boxed junction|box junction/.test(t)) rule = { effect: 'no-parking' };
   else if (/unrestricted/.test(t)) rule = { effect: 'free' };
   else if (/pay|ticket|shared use/.test(t)) rule = { effect: 'paid' };
+  // "Permit Holders or Limited Waiting …": anyone may stay a while.
+  else if (/limited waiting/.test(t)) rule = { effect: 'free', label: stayLabel(text) };
   else if (/permit|resident/.test(t)) rule = { effect: 'permit' };
-  else if (/limited waiting|max(imum)? stay/.test(t)) {
-    // The first length of stay that isn't how long before you can return.
-    const max = /(\d+(?:\.\d+)?\s*(?:hours?|hrs?|mins?|minutes?))\b/i.exec(text.replace(/no\s+return(\s+within)?\s*\d+(\.\d+)?\s*\w+/gi, ''));
-    rule = { effect: 'free', label: max ? `Free for up to ${max[1]}` : 'Free, limited stay (see sign)' };
-  } else if (/free/.test(t)) rule = { effect: 'free' };
+  else if (/max(imum)? stay/.test(t)) rule = { effect: 'free', label: stayLabel(text) };
+  else if (/free/.test(t)) rule = { effect: 'free' };
   // Bays kept for someone else: "Hospital only", "Supreme Court permit bay".
   else if (/\bonly\b/.test(t)) rule = { effect: 'restricted', label: tidy(text) };
   else return { label: '', rules: [], otherwise: { effect: 'unknown', label: tidy(text) }, notes: [] };
@@ -176,6 +179,12 @@ export function kerbPart(text, type = '') {
   };
 }
 
+/** "Free for up to 2 hours": the first length of stay that isn't how long before you can return. */
+function stayLabel(text) {
+  const max = /(\d+(?:\.\d+)?\s*(?:hours?|hrs?|mins?|minutes?))\b/i.exec(text.replace(/no\s+return(\s+within)?\s*\d+(\.\d+)?\s*\w+/gi, ''));
+  return max ? `Free for up to ${max[1]}` : 'Free, limited stay (see sign)';
+}
+
 /**
  * Just the days and times of a restriction: without zone, tariff and bay codes
  * ("Zone CH1", "(TC2)", "D3", "No. 281"), "Off-Street" (which would read as days off), lengths of stay ("Max stay 4hrs No return within 2hrs"),
@@ -186,7 +195,7 @@ function scheduleText(text) {
   return text
     .split('/')[0]
     .replace(/\([^)]*\)/g, ' ')
-    .replace(/\bon school entrance markings\b|\boff-street\b/gi, ' ')
+    .replace(/\bon school entrance markings?\b|\boff-street\b/gi, ' ')
     .replace(/\b(zone\s+[a-z]*\d\w*|[a-z]{1,3}-?\d+|no\.\s*\d+)\b/gi, ' ')
     .replace(/\b(max(imum)?\s+stay|limited\s+waiting|no\s+return(\s+within)?)?\s*\d+(\.\d+)?\s*(hours?|hrs?|mins?|minutes?)\b/gi, ' ')
     .replace(/\s+/g, ' ')
