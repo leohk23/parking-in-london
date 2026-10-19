@@ -54,6 +54,13 @@ test('unknown fee is shown as unknown, not free', () => {
   assert.equal(o.status, 'unknown');
 });
 
+test('unnamed street-side bays are marked for grouping; named car parks are not', () => {
+  const bay = { type: 'node', id: 5, lat: 51.5, lon: -0.1, tags: { amenity: 'parking', parking: 'street_side' } };
+  assert.equal(evaluate(bay)[0].group, 'street-bays');
+  assert.equal(evaluate({ ...bay, tags: { ...bay.tags, name: 'High Street bays' } })[0].group, undefined);
+  assert.equal(evaluate({ ...bay, tags: { amenity: 'parking' } })[0].group, undefined);
+});
+
 test('street parking, current scheme: residents during the day, free otherwise', () => {
   const tags = {
     name: 'Test Street',

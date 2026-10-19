@@ -200,6 +200,8 @@ function carPark(el) {
     id: `osm-${el.type}-${el.id}`,
     source: 'osm',
     kind: 'car-park',
+    // Unnamed bays along a road: shown together in the list when their terms aren't mapped.
+    ...(!t.name && STREET_BAYS.has(t.parking) && { group: 'street-bays' }),
     title: t.name ?? type,
     subtitle: [t.name ? type : null, t.operator, t.capacity && `${t.capacity} spaces`].filter(Boolean).join(' · '),
     point,
@@ -267,6 +269,7 @@ function streetParts(tags) {
   return [left && { ...left, label: 'One side' }, right && { ...right, label: 'Other side' }].filter(Boolean);
 }
 
+const STREET_BAYS = new Set(['street_side', 'lane', 'layby']);
 const PARKING_ROWS = new Set(['lane', 'street_side', 'on_kerb', 'half_on_kerb', 'shoulder', 'yes']);
 const NEW_SCHEME_KEYS = ['', ':restriction', ':restriction:conditional', ':access', ':access:conditional', ':fee', ':fee:conditional'];
 
