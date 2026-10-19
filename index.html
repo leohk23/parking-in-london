@@ -2,7 +2,8 @@
 <html lang="en-GB">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- resizes-content: on Android the keyboard shrinks the page instead of covering it, so the search bar sits just above the keyboard. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#0f6b4f" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Park Nearby" />
@@ -56,7 +57,7 @@
     <main class="layout">
       <div id="map" aria-label="Map of parking options"></div>
       <section class="results" aria-live="polite">
-        <div id="status" class="status">Search for where you're going to see nearby parking.</div>
+        <div id="status" class="status">Search for where you're going to see nearby parking, or long-press the map to drop a pin.</div>
         <div class="controls" hidden>
           <label><input type="checkbox" id="freeOnly" /> Free for my whole stay</label>
           <label>Within
