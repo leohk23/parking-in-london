@@ -51,11 +51,23 @@ nwr["amenity"="parking"](${bbox})->.parking;
 out geom;`;
 }
 
-/** `cache` ({ get, set }) keeps answers for repeat searches of the same place. */
-export async function fetchOsm(bbox, { street, center, streets, cache, fetchImpl = fetch, endpoints = OVERPASS_URLS, hedgeAfterMs = HEDGE_AFTER_MS } = {}) {
+/**
+ * `tiles` loads the prebuilt copy (src/sources/osm-tiles.js), tried first; the
+ * live Overpass servers are the fallback. `cache` ({ get, set }) keeps Overpass
+ * answers for repeat searches of the same place. The result says which was used.
+ */
+export async function fetchOsm(bbox, { street, center, streets, tiles, cache, fetchImpl = fetch, endpoints = OVERPASS_URLS, hedgeAfterMs = HEDGE_AFTER_MS } = {}) {
+  if (tiles) {
+    try {
+      const json = await tiles(bbox, { fetchImpl });
+      return { ...parseOsm(json), via: 'prebuilt', updated: json.updated };
+    } catch {
+      // Not built, or outside London: ask Overpass.
+    }
+  }
   const query = overpassQuery(bbox, { street, center, streets });
   const cached = cache?.get(query);
-  if (cached) return { ...parseOsm(cached), cached: true };
+  if (cached) return { ...parseOsm(cached), cached: true, via: 'saved' };
   const body = new URLSearchParams({ data: query }).toString();
   let json;
   try {
@@ -77,7 +89,7 @@ export async function fetchOsm(bbox, { street, center, streets, cache, fetchImpl
     });
   }
   cache?.set(query, json);
-  return parseOsm(json);
+  return { ...parseOsm(json), via: 'live' };
 }
 
 /**

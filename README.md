@@ -47,7 +47,9 @@ London has no single open dataset of parking restrictions, so the app combines s
 
 As you type, suggestions come from [Photon](https://photon.komoot.io) (built for search-as-you-type, limited to London) and, for postcodes, [postcodes.io](https://postcodes.io). Pressing Find without picking a suggestion looks the text up with postcodes.io or OpenStreetMap's Nominatim.
 
-OpenStreetMap's Overpass servers can be slow when busy. If the main server hasn't answered within 6 seconds, the same request also goes to a mirror, and whichever answers first is used. Answers are kept in the browser for a week, so a repeat search of the same place doesn't wait for them.
+OpenStreetMap's live Overpass servers can be slow when busy, so the deploy workflow (and its weekly run) prebuilds London's OpenStreetMap data into small tiles on the site: it downloads Geofabrik's Greater London extract, keeps the car parks, street-parking tags and named roads with [osmium](https://osmcode.org/osmium-tool/), and cuts them into tiles of about 1 km (`scripts/build-osm-tiles.mjs`). A search loads the few tiles around it, usually in well under a second. Outside London, or if the tiles weren't built, the app asks Overpass as before: if the main server hasn't answered within 6 seconds the same request also goes to a mirror, and answers are kept in the browser for a week.
+
+Under the counts, each search shows how long it took and how long each source took, so a slow source is easy to spot; a result's ⓘ box says how its data was loaded. The site also keeps its own files in an offline cache (`sw.js`), so it opens instantly on repeat visits and on a weak signal.
 
 Recent destinations (the last six) are kept in the browser too, and shown when you tap the empty search box.
 

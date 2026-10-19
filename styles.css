@@ -445,6 +445,12 @@ button.busy::after,
   margin-bottom: 8px;
 }
 
+.status .timing {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+}
+
 .status .warn {
   display: block;
   margin-top: 6px;
