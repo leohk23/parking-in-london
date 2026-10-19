@@ -48,6 +48,7 @@ jobs:
         run: |
           node scripts/update-wandsworth.mjs || echo "::warning::Kept the committed Wandsworth list"
           node scripts/update-kingston.mjs || echo "::warning::Kept the committed Kingston list"
+          node scripts/update-ealing.mjs || echo "::warning::Kept the committed Ealing list"
       # OpenStreetMap's car parks, street parking and street shapes for London,
       # cut into small tiles so searches don't wait on the busy Overpass servers.
       # If this fails the site is published without them and the app uses Overpass.
