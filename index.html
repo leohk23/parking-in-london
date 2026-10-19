@@ -17,9 +17,10 @@
     <header class="top">
       <h1 class="visually-hidden">Park Nearby</h1>
       <form id="search" autocomplete="off">
-        <div class="row">
+        <div class="row search-row">
           <span class="logo" aria-hidden="true">P</span>
-          <input id="q" name="q" type="search" placeholder="Where are you going?" aria-label="Destination" required />
+          <input id="q" name="q" type="search" placeholder="Where are you going?" aria-label="Destination" autocomplete="off" required />
+          <ul id="suggestions" class="suggestions" hidden></ul>
           <button type="button" id="locate" class="secondary icon" title="Park near me" aria-label="Find parking near my location">◎</button>
           <button type="submit" id="go">Find</button>
         </div>

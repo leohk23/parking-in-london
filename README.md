@@ -44,7 +44,7 @@ London has no single open dataset of parking restrictions, so the app combines f
 | [Camden Council "Parking Bays"](https://opendata.camden.gov.uk/Transport/Parking-Bays/7hiv-3r9k) | Every on-street bay in Camden, with type, times, max stay and tariff | Loaded only when you search in or near Camden. |
 | `data/zones.js` | Controlled parking zone (CPZ) hours for streets you add by hand, taken from council websites | Seeded with Wandsworth's Southfields and Putney A6 zones and Wimbledon Park Road. |
 
-Postcodes are looked up with [postcodes.io](https://postcodes.io); other places with OpenStreetMap's Nominatim.
+As you type, suggestions come from [Photon](https://photon.komoot.io) (built for search-as-you-type, limited to London) and, for postcodes, [postcodes.io](https://postcodes.io). Pressing Find without picking a suggestion looks the text up with postcodes.io or OpenStreetMap's Nominatim.
 
 OpenStreetMap's Overpass servers can be slow when busy. If the main server hasn't answered within 6 seconds, the same request also goes to a mirror, and whichever answers first is used.
 

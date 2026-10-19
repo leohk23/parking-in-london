@@ -2,12 +2,13 @@
 /* global L */
 
 import { geocode, reverseGeocode } from './geocode.js';
+import { attachSuggestions } from './autocomplete.js';
 import { fetchOsm } from './sources/osm.js';
 import { fetchCamden } from './sources/camden.js';
 import { fetchCouncilZones } from './sources/council-zones.js';
 import { zoneOptions, zonesCover, normaliseName } from './sources/zones.js';
 import { evaluateOption, STATUS_RANK, STATUS_LABELS } from './evaluate.js';
-import { londonClock, isBankHoliday, DAY_NAMES } from './schedule.js';
+import { londonClock, isBankHoliday } from './schedule.js';
 import { bboxAround, distanceToOption } from './geo.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -57,9 +58,21 @@ new LocateControl().addTo(map);
 let current = null;
 let searchCount = 0;
 
+// The place picked from the suggestions (or found from your location), reused
+// by Find while the box still shows its name.
+let pickedPlace = null;
+attachSuggestions($('#q'), $('#suggestions'), {
+  onPick: (place) => {
+    pickedPlace = place;
+    search({ query: place.label, dest: place });
+  },
+});
+
 $('#search').addEventListener('submit', (e) => {
   e.preventDefault();
-  search({ query: $('#q').value });
+  const query = $('#q').value;
+  if (pickedPlace?.label !== query) pickedPlace = null;
+  search({ query, dest: pickedPlace ?? undefined });
 });
 $('#locate').addEventListener('click', locate);
 // "Now" shows the current time in the box and keeps it current; picking a
@@ -98,6 +111,7 @@ async function locate() {
   showProgress('Finding the address…');
   const place = await reverseGeocode(point, { signal: AbortSignal.timeout?.(6000) }).catch(() => null);
   $('#q').value = place?.label ?? '';
+  pickedPlace = place ? { label: place.label, point, street: place.street } : null;
   await search({ dest: { label: place?.label ?? 'Your location', point, street: place?.street ?? null } });
 }
 
@@ -182,7 +196,7 @@ async function search({ query, dest }) {
       { name: 'Camden bay data', load: fetchCamden(area).then((r) => r.options) },
     ];
     const waiting = new Set(sources.map((src) => src.name));
-    current = { dest, options: [], clock, isNow, stay, sourceNotes: [], loading: true };
+    current = { dest, options: [], clock, sourceNotes: [], loading: true };
     showProgress('Loading parking data…');
     render();
 
@@ -212,7 +226,7 @@ async function search({ query, dest }) {
 
 function render() {
   if (!current) return;
-  const { dest, clock, isNow, stay, sourceNotes } = current;
+  const { dest, clock, sourceNotes } = current;
   const freeOnly = $('#freeOnly').checked;
   const sort = $('#sort').value;
 
@@ -225,14 +239,13 @@ function render() {
     );
 
   const counts = current.options.reduce((acc, o) => ({ ...acc, [o.status]: (acc[o.status] ?? 0) + 1 }), {});
-  const when = `${DAY_NAMES[clock.weekday]} ${clock.date.slice(8)}/${clock.date.slice(5, 7)} ${timeOfDay(clock.minutes)}`;
   const warnings = [...sourceNotes];
   if (isBankHoliday(clock.date)) {
     warnings.push("It's a bank holiday. Many zones don't operate today, but some do. Check the signs.");
   }
+  // Where and when are already in the boxes above, so the summary is just the counts.
   showStatus(
-    `<b>${esc(dest.label)}</b> · arriving ${isNow ? 'now, ' : ''}${esc(when)} for ${stayLabel(stay)}<br>` +
-      `${counts.free ?? 0} free · ${counts.paid ?? 0} paid · ${counts.no ?? 0} not allowed · ${counts.unknown ?? 0} to check` +
+    `${counts.free ?? 0} free · ${counts.paid ?? 0} paid · ${counts.no ?? 0} not allowed · ${counts.unknown ?? 0} to check` +
       warnings.map((w) => `<span class="warn">${esc(w)}</span>`).join(''),
   );
   $('.controls').hidden = false;
@@ -389,14 +402,6 @@ function restoreFromUrl() {
     $('#q').value = params.get('q');
     search({ query: params.get('q') });
   }
-}
-
-function timeOfDay(minutes) {
-  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
-}
-
-function stayLabel(minutes) {
-  return minutes < 60 ? `${minutes} min` : `${minutes / 60} hour${minutes === 60 ? '' : 's'}`;
 }
 
 function esc(s) {
