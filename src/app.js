@@ -28,7 +28,31 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
 }).addTo(map);
 const resultsLayer = L.layerGroup().addTo(map);
+const youLayer = L.layerGroup().addTo(map);
 const layersById = new Map();
+
+// Map button that shows where you are, without changing the search.
+const LOCATE_ICON =
+  '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4" stroke="currentColor" stroke-width="2"/></svg>';
+const LocateControl = L.Control.extend({
+  options: { position: 'topleft' },
+  onAdd() {
+    const bar = L.DomUtil.create('div', 'leaflet-bar');
+    const link = L.DomUtil.create('a', 'map-locate', bar);
+    link.href = '#';
+    link.setAttribute('role', 'button');
+    link.title = 'Show my location';
+    link.setAttribute('aria-label', 'Show my location');
+    link.innerHTML = LOCATE_ICON;
+    L.DomEvent.disableClickPropagation(bar);
+    L.DomEvent.on(link, 'click', (e) => {
+      L.DomEvent.preventDefault(e);
+      recenter(link);
+    });
+    return bar;
+  },
+});
+new LocateControl().addTo(map);
 
 let current = null;
 let searchCount = 0;
@@ -48,6 +72,8 @@ for (const type of ['input', 'change']) {
 setInterval(showNowTime, 30000);
 document.addEventListener('visibilitychange', showNowTime);
 $('#freeOnly').addEventListener('change', render);
+// A new radius re-runs the current search straight away.
+$('#radius').addEventListener('change', () => current && search({ dest: current.dest }));
 $('#sort').addEventListener('change', render);
 
 restoreFromUrl();
@@ -59,7 +85,9 @@ async function locate() {
   showProgress('Getting your location…');
   let point;
   try {
-    point = await currentPosition();
+    const here = await currentPosition();
+    showYou(here);
+    point = here.point;
   } catch (err) {
     setBusy(false);
     return showProgress(locationError(err), 'error');
@@ -73,10 +101,35 @@ async function locate() {
   await search({ dest: { label: place?.label ?? 'Your location', point, street: place?.street ?? null } });
 }
 
+async function recenter(link) {
+  if (!navigator.geolocation) return showProgress("Location isn't available in this browser.", 'error');
+  link.classList.add('busy');
+  try {
+    const here = await currentPosition();
+    showYou(here);
+    map.setView(here.point, Math.max(map.getZoom(), 16));
+  } catch (err) {
+    showProgress(locationError(err), 'error');
+  } finally {
+    link.classList.remove('busy');
+  }
+}
+
+/** Blue dot for your position, with a faint circle for how accurate it is. */
+function showYou({ point, accuracy }) {
+  youLayer.clearLayers();
+  if (accuracy < 500) {
+    L.circle(point, { radius: accuracy, color: '#1d73e8', weight: 1, opacity: 0.4, fillOpacity: 0.08, interactive: false }).addTo(youLayer);
+  }
+  L.circleMarker(point, { radius: 7, color: '#fff', weight: 2, fillColor: '#1d73e8', fillOpacity: 1 })
+    .bindTooltip('You are here')
+    .addTo(youLayer);
+}
+
 function currentPosition() {
   return new Promise((resolve, reject) =>
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve([pos.coords.latitude, pos.coords.longitude]),
+      (pos) => resolve({ point: [pos.coords.latitude, pos.coords.longitude], accuracy: pos.coords.accuracy }),
       reject,
       // A fix from the last minute is good enough and saves waiting for GPS.
       { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 },
@@ -228,7 +281,7 @@ function drawMap(dest, options) {
     } else {
       layer = L.circleMarker(o.point, { radius: 9, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 });
     }
-    layer.bindPopup(`<div class="card ${o.status}">${cardHtml(o)}</div>`, { maxWidth: 320 });
+    layer.bindPopup(`<div class="card popup ${o.status}">${cardHtml(o, { compact: true })}</div>`, { maxWidth: 280 });
     layer.addTo(resultsLayer);
     layersById.set(o.id, layer);
   }
@@ -252,7 +305,8 @@ function focusOption(id) {
   if (window.matchMedia('(max-width: 899px)').matches) $('#map').scrollIntoView({ behavior: 'smooth' });
 }
 
-function cardHtml(o) {
+/** `compact` is for map popups: what you need to decide, without subtitle, notes or source. */
+function cardHtml(o, { compact = false } = {}) {
   const parts = o.results
     .map(
       (r) =>
@@ -268,12 +322,14 @@ function cardHtml(o) {
       ? "you're in this zone"
       : 'your street'
     : `${Math.round(o.distance / 10) * 10} m · ${Math.max(1, Math.round(o.distance / 80))} min walk`;
-  return `
+  const head = `
     <div class="card-head">
       <span class="badge ${o.status}">${partlyFree ? 'Part free' : STATUS_LABELS[o.status]}</span>
       <span class="card-title">${esc(o.title)}</span>
       <span class="card-dist">${where}</span>
-    </div>
+    </div>`;
+  if (compact) return `${head}<ul class="parts">${parts}</ul>`;
+  return `${head}
     ${o.subtitle ? `<div class="card-sub">${esc(o.subtitle)}</div>` : ''}
     <ul class="parts">${parts}</ul>
     ${notes.length ? `<details class="notes"><summary>Notes (${notes.length})</summary><ul>${notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></details>` : ''}
@@ -294,7 +350,7 @@ function showProgress(message, kind = '') {
 
 function setBusy(busy) {
   $('#go').disabled = busy;
-  $('#go').textContent = busy ? 'Searching…' : 'Find parking';
+  $('#go').classList.toggle('busy', busy);
   $('#locate').disabled = busy;
 }
 
