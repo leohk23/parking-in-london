@@ -212,7 +212,32 @@ const PIN_ICON = L.divIcon({
 });
 map.on('contextmenu', (e) => dropPin([e.latlng.lat, e.latlng.lng]));
 
+// A hint on the map until the first pin is dropped (or it's closed), since long-press isn't obvious.
+const PIN_HINT_KEY = 'park-nearby:pin-hint-seen';
+const pinHint = L.DomUtil.create('div', 'map-hint', map.getContainer());
+const touch = window.matchMedia('(pointer: coarse)').matches;
+pinHint.innerHTML = `<span>📍 ${touch ? 'Long-press' : 'Right-click'} the map to drop a pin</span><button type="button" aria-label="Hide this tip">✕</button>`;
+L.DomEvent.disableClickPropagation(pinHint);
+pinHint.querySelector('button').addEventListener('click', hidePinHint);
+pinHint.hidden = readFlag(PIN_HINT_KEY);
+
+function hidePinHint() {
+  pinHint.hidden = true;
+  try {
+    localStorage.setItem(PIN_HINT_KEY, '1');
+  } catch {}
+}
+
+function readFlag(key) {
+  try {
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+
 function dropPin(point) {
+  hidePinHint();
   pinLayer.clearLayers();
   const body = L.DomUtil.create('div', 'pin-popup');
   body.innerHTML = '<div class="pin-address">Finding the address…</div><button type="button">Find parking here</button>';
