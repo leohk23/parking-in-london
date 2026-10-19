@@ -15,6 +15,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { osgbToWgs84 } from './osgb.mjs';
 import { STEP, tileKey } from './build-osm-tiles.mjs';
+import { parseSchedule } from '../src/schedule.js';
 
 const TRAFFWEB = 'https://mapserver.traffweb.app/cgi-bin';
 const HARROW = 'https://mapping.harrow.gov.uk/server/rest/services/Public/Transport_and_Streets_2/MapServer';
@@ -24,7 +25,30 @@ export const TRAFFWEB_SOURCES = [
   { id: 'redbridge', tenant: 'redbridge' },
   { id: 'barking-dagenham', tenant: 'barking-dagenham' },
   { id: 'waltham-forest', tenant: 'walthamforest' },
+  { id: 'lewisham', tenant: 'lewisham' },
+  { id: 'greenwich', tenant: 'greenwich' },
+  { id: 'bexley', tenant: 'bexley', zones: true, hours: bexleyHours },
 ];
+
+// Bexley's map has some zones without hours or codes; its permits page has the
+// current hours of each zone, which win.
+const BEXLEY_PERMITS = 'https://www.bexley.gov.uk/services/parking-transport-and-streets/parking-permits/residents-parking-permits';
+const BEXLEY_NAMES = { WHeath: 'WH', 'Erith Town Centre': 'ER' };
+// The page's footnote: "some roads in zones A and ER have different times".
+const BEXLEY_NOTES = { A: ['Some roads have different times: check the signs.'], ER: ['Some roads have different times: check the signs.'] };
+
+/** Zone code → { hours, notes } from Bexley's table (Area | Zone Code | Days | Times | …). */
+async function bexleyHours() {
+  const page = await get(BEXLEY_PERMITS);
+  const cells = (row) => [...row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/g)].map(([, c]) => decode(c.replace(/<[^>]+>/g, ' ')));
+  const table = {};
+  for (const [row] of page.matchAll(/<tr[\s\S]*?<\/tr>/g)) {
+    const [area, code, days, times] = cells(row);
+    if (code && /^[A-Z]{1,3}\d?$/.test(code) && times) table[code] = { area: area.replace(/\*+$/, ''), hours: `${days} ${times}`, notes: BEXLEY_NOTES[code] ?? [] };
+  }
+  if (Object.keys(table).length < 10) throw new Error('the permits page has no hours table');
+  return table;
+}
 
 // Harrow publishes each kind of restriction as its own layer: layer id →
 // properties → [type, restriction] in words the app understands (see kerbPart).
@@ -169,7 +193,7 @@ async function westminsterKerb() {
 
 // Traffic orders that aren't about parking at the kerb.
 const NOT_PARKING =
-  /closure|copenhagen|hatched|cycle|pedestrian zone|test tile|footway parking|wheel|pavement parking|box junction|experimental orders|^off-street car park$|access marking/i;
+  /closure|copenhagen|hatched|cycle|pedestrian zone|test tile|footway parking|footway bay|wheel|pavement parking|box junction|experimental orders|^off-street car park$|access marking/i;
 
 const MAX_ORDER = 1600;
 
@@ -309,16 +333,22 @@ function zoneFeature(properties, geometry) {
   return { type: 'Feature', properties, geometry: { type: geometry.type, coordinates } };
 }
 
-/** Enfield's zones as GeoJSON in lon/lat, like the councils' own zone maps. */
-function traffwebZones(features) {
+/**
+ * TraffWeb zones (Enfield's, Bexley's) as GeoJSON in lon/lat, like the councils'
+ * own zone maps, with hours from the council's table (`hours`) where it has one.
+ */
+export function traffwebZones(features, hours = {}) {
   return {
     type: 'FeatureCollection',
-    features: features.map(({ props, rings }) =>
-      zoneFeature(
-        { zone: props.zonecode || undefined, area: props.polyname, hours: props.poly_info },
+    features: features.map(({ props, rings }) => {
+      const area = props.polyname?.replace(/\.$/, '');
+      const zone = props.zonecode || BEXLEY_NAMES[area] || undefined;
+      const fill = hours[zone];
+      return zoneFeature(
+        { zone, area: fill?.area ?? area, hours: fill?.hours ?? props.poly_info, ...(fill?.notes?.length && { notes: fill.notes }) },
         { type: 'MultiPolygon', coordinates: rings.map((ring) => [ring.map(([lat, lon]) => [lon, lat])]) },
-      ),
-    ),
+      );
+    }),
   };
 }
 
@@ -379,21 +409,22 @@ export function tileFile(elements) {
   return { w: [...words.keys()].map((k) => JSON.parse(k)), e };
 }
 
-// Islington's zones are only in its MapThat map, which wants a session.
-const MAPTHAT = 'https://map.islington.gov.uk/MapThatPublic';
-const ISLINGTON_CPZ_NODE = 224; // "Controlled Parking Zones (CPZ)" in its layer tree
+// Islington's and Lewisham's zones are only in their MapThat maps, which want a
+// session: a few requests to log in as the public user, then the layer by its
+// place in the map's layer tree, whose id changes with every session.
 
-async function islingtonZones() {
+function mapThatSession(base) {
   const cookies = new Map();
-  const call = async (path, body) => {
+  return async (path, body, headers = {}) => {
     for (let i = 1; ; i++) {
       try {
-        const res = await fetch(`${MAPTHAT}${path}`, {
+        const res = await fetch(`${base}${path}`, {
           method: body ? 'POST' : 'GET',
           headers: {
             'User-Agent': 'Mozilla/5.0',
             Cookie: [...cookies].map(([k, v]) => `${k}=${v}`).join('; '),
             ...(body && { 'Content-Type': 'application/json; charset=utf-8' }),
+            ...headers,
           },
           body: body && JSON.stringify(body),
           signal: AbortSignal.timeout(120_000),
@@ -405,28 +436,65 @@ async function islingtonZones() {
         }
         return await res.text();
       } catch (err) {
-        // Its server drops connections now and then.
+        // Islington's server drops connections now and then.
         if (i >= 4) throw err;
         await new Promise((r) => setTimeout(r, 3000 * i));
       }
     }
   };
+}
+
+/** A logged-in MapThat session's layer: [{ RawData1: column names, RawData2: values, GeometryWKT }]. */
+async function mapThatLayer(call, treeId, [north, west, south, east]) {
+  const tree = JSON.parse(await call('/Default.aspx/GetMapThatData', {})).d.TreeNodes;
+  const guid = tree.find((n) => n.TreeID === treeId)?.UniqueGUID;
+  if (!guid) throw new Error(`no layer ${treeId} in the MapThat tree`);
+  return JSON.parse(
+    await call('/Default.aspx/GetGraphicsLayer', {
+      UniqueGUID: guid, Lat1: north, Lon1: west, Lat2: south, Lon2: east,
+      AreaSearchpoints: null, isNewSelectTool: false, showAllRecordsInHitsPanel: true, exportToExcel: false, temporalFilter: '', areaFilterType: '',
+    }),
+  ).d[1];
+}
+
+/** "a,b,c" columns and values → { a, b, c }. */
+const rawData = ({ RawData1, RawData2 }) => Object.fromEntries(RawData1.split(',').map((k, i) => [k, RawData2.split(',')[i]?.trim()]));
+const wktPolygons = (wkt) => [...wkt.matchAll(/\(\(([^()]+(?:\),\s*\([^()]+)*)\)\)/g)].map(([, polygon]) =>
+  polygon.split(/\),\s*\(/).map((ring) => ring.split(',').map((pair) => pair.trim().split(/\s+/).map(Number))),
+);
+
+async function islingtonZones() {
+  const call = mapThatSession('https://map.islington.gov.uk/MapThatPublic');
   await call('/login.html?user=public');
   await call('/Api/User', { LOGON_ID: 'Public', PASSWORD: 'xyz', IS_OPEN_ACCESS: true });
   await call('/Api/UserProject', { USER_ID: 1, ROLE_ID: 2, PROJECT_ID: 2 });
   await call('/Api/User/TermsAndCondition', { LOGON_ID: 'Public' });
   await call('/Default.aspx');
-  const tree = JSON.parse(await call('/Default.aspx/GetMapThatData', {})).d.TreeNodes;
-  const guid = tree.find((n) => n.TreeID === ISLINGTON_CPZ_NODE)?.UniqueGUID;
-  if (!guid) throw new Error('no CPZ layer in the MapThat tree');
-  // The whole borough: north-east latitude, south-west longitude, south-west latitude, north-east longitude.
-  const layer = JSON.parse(
-    await call('/Default.aspx/GetGraphicsLayer', {
-      UniqueGUID: guid, Lat1: 51.6, Lon1: -0.16, Lat2: 51.5, Lon2: -0.06,
-      AreaSearchpoints: null, isNewSelectTool: false, showAllRecordsInHitsPanel: false, exportToExcel: false, temporalFilter: '', areaFilterType: '',
-    }),
-  ).d[1];
+  // 224: "Controlled Parking Zones (CPZ)".
+  const layer = await mapThatLayer(call, 224, [51.6, -0.16, 51.5, -0.06]);
   return { type: 'FeatureCollection', features: layer.map((f) => islingtonZone(f.RawData1, f.RawData2, f.GeometryWKT)) };
+}
+
+async function lewishamZones() {
+  const base = 'https://lbl.dynamicmaps.co.uk/MapThatWeb';
+  const call = mapThatSession(base);
+  await call('/login.html?user=lewisham');
+  await call('/Api/User/AuthenticateUser', undefined, { Referer: `${base}/login.html?user=lewisham` });
+  await call('/Default.aspx');
+  // 526: "Controlled parking zones".
+  const layer = await mapThatLayer(call, 526, [51.52, -0.1, 51.4, 0.07]);
+  return { type: 'FeatureCollection', features: layer.map((f) => lewishamZone(rawData(f), f.GeometryWKT)) };
+}
+
+/**
+ * One Lewisham zone ({ zone_id, zone_name, operatingd, operatingt }): two-part
+ * hours like "Mon-Fri/Sat" + "9am-6pm/9am-1.30pm" become "Mon-Fri 9am-6pm; Sat 9am-1.30pm".
+ */
+export function lewishamZone(v, wkt) {
+  const days = (v.operatingd ?? '').split('/');
+  const times = (v.operatingt ?? '').split('/');
+  const hours = days.length === times.length ? days.map((d, i) => `${d} ${times[i]}`).join('; ') : v.control;
+  return zoneFeature({ zone: v.zone_id, area: v.zone_name || undefined, hours }, { type: 'MultiPolygon', coordinates: wktPolygons(wkt) });
 }
 
 /** One Islington zone: its columns (CPZ, AREA_NAME, MON_TO_FRI, SAT, ADDITIONAL_MATCH_DAY_CONTROLS) as comma-joined text, and WKT in lon/lat. */
@@ -486,6 +554,101 @@ export function haringeyHours(text, name = '') {
   return { hours: t.slice(0, cut.index), notes: [note.endsWith('.') ? note : `${note}.`] };
 }
 
+// Brent's zone map loads a GeoJSON file. Its hours are sometimes cut short or
+// shifted between fields, so the council's hours table wins for zones it lists once.
+const BRENT_MAP = 'https://www.brent.gov.uk/-/media/maps/external/cpz.json';
+const BRENT_PAGE = 'https://www.brent.gov.uk/parking-roads-and-travel/parking/where-you-can-park/controlled-parking-zones';
+
+async function brentZones(now = new Date()) {
+  const table = brentTable(await get(BRENT_PAGE));
+  const map = await get(BRENT_MAP, { as: 'json' });
+  return { type: 'FeatureCollection', features: map.features.map((f) => brentZone(f, table, now)).filter(Boolean) };
+}
+
+/** Zone code → hours, for codes with one row in the council's table (Zone | Hours). */
+export function brentTable(html) {
+  const rows = {};
+  for (const [row] of html.matchAll(/<tr[\s\S]*?<\/tr>/g)) {
+    const [code, hours] = [...row.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/g)].map(([, c]) => decode(c.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ')));
+    if (code && hours && /^[A-Z]{1,3}\d?$/.test(code)) (rows[code] ??= []).push(hours.replace(/\s*\(see notes below\)/i, ''));
+  }
+  return Object.fromEntries(Object.entries(rows).filter(([, h]) => h.length === 1).map(([code, [h]]) => [code, h]));
+}
+
+const EVENT_DAYS = /\bon even[ty] days?\b/i;
+
+/** One feature of Brent's map → a zone feature, or null for a zone that hasn't started yet. */
+export function brentZone({ properties: p, geometry }, table, now = new Date()) {
+  const start = /to start on (\d+)\w*\s+(\w+)\s+(\d+)/i.exec(p.status ?? '');
+  if (start && new Date(`${start[1]} ${start[2]} 20${start[3].slice(-2)}`) > now) return null;
+  // "SZ2 (Annesley Close)", "KS (Subzone 3)", "KR_2", "GS - Extension", "Zone BA CPZ"; or a name.
+  const name = (p.CPZ ?? '').trim();
+  const m = /^(?:zone\s+)?([A-Z]{1,3}\d?)(?:_\d|\s*-\s*extension)?(?:\s*\(([^)]*)\))?(?:\s+CPZ)?$/i.exec(name);
+  const zone = m?.[1];
+  const fields = [p.Operational, p.operational_days, p.operational_times].join(' ');
+  // The map's own hours: its summary up to "On event days" if readable, else days and times.
+  const summary = (p.Operational ?? '').split(EVENT_DAYS)[0].replace(/[.\s]+$/, '');
+  const times = (p.operational_times ?? '').split(EVENT_DAYS)[0].replace(/\s+/g, ' ').trim();
+  const days = /^(mon|tue|wed|thu|fri|sat|sun)/i.test(p.operational_days ?? '') ? p.operational_days.split(/\s+and\s+/)[0] : '';
+  const own = parseSchedule(summary) ? summary : `${days} ${times}`.trim();
+  // Extra hours over the August bank holiday weekend, when the field has days and times.
+  const august = /\d/.test(p['August ban'] ?? '') && /(mon|sat|sun)day/i.test(p['August ban']) ? [`Also over the August bank holiday weekend: ${p['August ban'].replace(/\.\s*/, ' ')}.`] : [];
+  const event = EVENT_DAYS.test(fields) || /event/i.test(p.bank_holiday ?? '') ? ['Extra controls on Wembley event days: check the signs.'] : [];
+  return zoneFeature(
+    { zone, title: zone ? undefined : name, area: m?.[2], hours: (zone && table[zone]) || own, notes: [...event, ...august] },
+    geometry,
+  );
+}
+
+// Greenwich's zone map embeds its zones in the page; its hours lag behind the
+// council's directory of zones, which wins.
+const GREENWICH = 'https://www.royalgreenwich.gov.uk';
+const GREENWICH_MAP = `${GREENWICH}/parking-transport-and-streets/check-if-you-need-parking-permit-or-update-your-details/check-if-you/map`;
+const GREENWICH_DIRECTORY = `${GREENWICH}/directory/71/cpz_fees`;
+
+async function greenwichZones() {
+  const page = await get(GREENWICH_MAP);
+  const settings = JSON.parse(/<script type="application\/json" data-drupal-selector="drupal-settings-json">([\s\S]*?)<\/script>/.exec(page)?.[1] ?? 'null');
+  const polygons = settings?.cpzMap?.polygons;
+  if (!polygons?.features) throw new Error('no zones in the map page');
+  const directory = {};
+  for (const listing of [GREENWICH_DIRECTORY, `${GREENWICH_DIRECTORY}?page=1`]) {
+    for (const [, path] of (await get(listing)).matchAll(/href="(\/directory_record\/\d+\/[^"]+)"/g)) {
+      const record = greenwichRecord(await get(`${GREENWICH}${path}`));
+      if (record.code) directory[record.code] = record;
+    }
+  }
+  if (Object.keys(directory).length < 20) console.log(`::warning::Greenwich's directory has only ${Object.keys(directory).length} zones`);
+  return { type: 'FeatureCollection', features: polygons.features.map((f) => greenwichZone(f, directory)).filter(Boolean) };
+}
+
+/** A directory record's labelled fields ("Zone code", "Days of operation", "Times of operation"). */
+export function greenwichRecord(html) {
+  const fields = Object.fromEntries(
+    [...html.matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/g)].map(([, k, v]) => [decode(k.replace(/<[^>]+>/g, ' ')), decode(v.replace(/<[^>]+>/g, ' '))]),
+  );
+  const times = fields['Times of operation'] ?? '';
+  // "Monday to Saturday 9am to 5pm, Sunday 9am to 6pm" already names its days.
+  const hours = /\b(mon|tues|wednes|thurs|fri|satur|sun)day\b/i.test(times) ? times : `${fields['Days of operation'] ?? ''} ${times}`.trim();
+  return { code: fields['Zone code'], name: fields['Zone name'], hours };
+}
+
+/**
+ * A feature of Greenwich's map → a zone, or null for exempt areas and other
+ * boroughs' zones near the edge ("…-CPZ-LB BEXLEY-ABBEY WOOD-AW"). The code
+ * field goes with the hours; the label ("…-CPZ-CHARLTON-C") has Abbey Wood's
+ * two zones swapped, so names come from the directory where it has them.
+ */
+export function greenwichZone({ properties: p, geometry }, directory = {}) {
+  const label = /^EX-HATCH-PERMIT-ELIGIBLE-CPZ-(.+)-([A-Z]{1,3})$/.exec(p.CPZ ?? '');
+  const zone = p['CPZ_eligbility_namelist_zoneinfo_CPZ code'];
+  if (!label || /^LB /.test(label[1]) || !zone || zone.includes('*')) return null;
+  const name = label[2] === zone ? label[1] : (p.CPZ_eligbility_namelist_zoneinfo_Text ?? label[1]);
+  const mapHours = (p.CPZ_eligbility_namelist_zoneinfo_CPZ_optim ?? '').replace(/_(?=[A-Z]{3})/g, '; ').replace(/_/g, ' ');
+  const area = directory[zone]?.name ?? name.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
+  return zoneFeature({ zone, area, hours: directory[zone]?.hours || mapHours }, geometry);
+}
+
 /** Every tile an element's bounding box touches. */
 function tilesOf(el) {
   const points = (el.g ?? el.p).flat();
@@ -528,7 +691,7 @@ async function main(dataDir) {
     }
   };
 
-  for (const { id, tenant, zones } of TRAFFWEB_SOURCES) {
+  for (const { id, tenant, zones, hours } of TRAFFWEB_SOURCES) {
     await run(id, async () => {
       const found = [];
       for (const layer of ['ordersl', 'ordersr']) {
@@ -540,7 +703,8 @@ async function main(dataDir) {
       }
       if (found.length < 1000) throw new Error(`only ${found.length} restrictions`);
       if (zones) {
-        const z = traffwebZones(parseTraffweb(await get(traffwebUrl(tenant, 'twpzones', date)), 'twpzones'));
+        const table = hours ? await hours().catch((err) => console.log(`::warning::${id} hours table not read: ${err.message}`)) : undefined;
+        const z = traffwebZones(parseTraffweb(await get(traffwebUrl(tenant, 'twpzones', date)), 'twpzones'), table);
         if (z.features.length) await writeFile(`${dataDir}/zones/${id}.json`, JSON.stringify(z));
       }
       elements.push(...found);
@@ -555,9 +719,9 @@ async function main(dataDir) {
     elements.push(...found);
     return found.length;
   });
-  await run('islington and haringey zones', async () => {
+  await run('zone maps', async () => {
     let found = 0;
-    for (const [id, load] of [['islington', islingtonZones], ['haringey', haringeyZones]]) {
+    for (const [id, load] of [['islington', islingtonZones], ['lewisham', lewishamZones], ['haringey', haringeyZones], ['brent', brentZones], ['greenwich', greenwichZones]]) {
       try {
         const z = await load();
         if (z.features.length < 20) throw new Error(`only ${z.features.length} zones`);

@@ -182,19 +182,17 @@ export const ZONE_LAYERS = [
     district: 'Enfield',
     bbox: [51.606, -0.182, 51.685, -0.01],
     url: () => copied('enfield'),
-    // Names like "GRANGE PARK CPZ"; a few zones have a code, and some no hours on the map.
-    read: (p) => {
-      const name = shout(p.area ?? '').replace(/\s*\bC\.?P\.?Z\.?(?=\s|$)/i, '');
-      return {
-        zone: p.zone,
-        title: p.zone ? undefined : name,
-        area: p.zone ? name : undefined,
-        hours: p.hours ?? '',
-        eventOnly: /event day/i.test(name),
-        unknown: 'Hours are on the zone entry signs',
-      };
-    },
+    read: traffwebZone,
     link: 'https://enfield.traffweb.app/',
+  },
+  {
+    id: 'bexley',
+    borough: 'Bexley',
+    district: 'Bexley',
+    bbox: [51.408, 0.07, 51.51, 0.22],
+    url: () => copied('bexley'),
+    read: traffwebZone,
+    link: 'https://www.bexley.gov.uk/services/parking-transport-and-streets/parking-permits/residents-parking-permits',
   },
   {
     id: 'islington',
@@ -206,6 +204,35 @@ export const ZONE_LAYERS = [
     link: 'https://www.islington.gov.uk/parking/parking-restrictions/controlled-parking-zones',
   },
   {
+    id: 'brent',
+    borough: 'Brent',
+    district: 'Brent',
+    bbox: [51.525, -0.34, 51.6, -0.19],
+    url: () => copied('brent'),
+    read: (p) => ({ zone: p.zone, title: p.title, area: p.area, hours: p.hours, notes: p.notes }),
+    // Much of the borough around the stadium is controlled on event days only.
+    outsideNotes: ['Around Wembley Stadium, event day restrictions apply on match and concert days: check the signs.'],
+    link: 'https://www.brent.gov.uk/parking-roads-and-travel/parking/where-you-can-park/controlled-parking-zones',
+  },
+  {
+    id: 'lewisham',
+    borough: 'Lewisham',
+    district: 'Lewisham',
+    bbox: [51.41, -0.08, 51.495, 0.04],
+    url: () => copied('lewisham'),
+    read: (p) => ({ zone: p.zone, area: p.area, hours: p.hours }),
+    link: 'https://lewisham.gov.uk/myservices/parking/permits/controlled-parking-zones-and-operating-times',
+  },
+  {
+    id: 'greenwich',
+    borough: 'Greenwich',
+    district: 'Greenwich',
+    bbox: [51.42, -0.03, 51.515, 0.125],
+    url: () => copied('greenwich'),
+    read: (p) => ({ zone: p.zone, area: p.area, hours: p.hours }),
+    link: 'https://www.royalgreenwich.gov.uk/directory/71/cpz_fees',
+  },
+  {
     id: 'haringey',
     borough: 'Haringey',
     district: 'Haringey',
@@ -215,6 +242,23 @@ export const ZONE_LAYERS = [
     link: 'https://haringey.gov.uk/parking/cpzs/all-cpz-hours',
   },
 ];
+
+/**
+ * A zone copied from a TraffWeb council's map: names like "GRANGE PARK CPZ"; a
+ * few zones have a code, and some no hours on the map.
+ */
+function traffwebZone(p) {
+  const name = shout(p.area ?? '').replace(/\s*\bC\.?P\.?Z\.?(?=\s|$)/i, '');
+  return {
+    zone: p.zone,
+    title: p.zone ? undefined : name,
+    area: p.zone ? name : undefined,
+    hours: p.hours ?? '',
+    notes: p.notes,
+    eventOnly: /event day/i.test(name),
+    unknown: 'Hours are on the zone entry signs',
+  };
+}
 
 /** "GRANGE PARK" → "Grange Park"; names already in mixed case stay as they are. */
 function shout(name) {
@@ -338,7 +382,7 @@ export function outsideZones(result, district, point) {
       title: 'No parking zone here',
       subtitle: `${layer.borough}, outside its controlled parking zones`,
       parts: [{ label: '', rules: [], otherwise: { effect: 'free', label: 'Free on streets without yellow lines or bays' }, notes: [] }],
-      notes: ['Yellow lines, bays and signs still apply.', LAG_NOTE],
+      notes: [...(layer.outsideNotes ?? []), 'Yellow lines, bays and signs still apply.', LAG_NOTE],
       link: layer.link,
     },
   ];

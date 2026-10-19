@@ -68,7 +68,7 @@ test('only boroughs near the search are queried', async () => {
   assert.match(urls[0], /LBHF\/INSPIRE\/MapServer\/10\/query\?geometry=-0\.25/);
   assert.match(urls[0], /outSR=4326.*f=geojson/);
 
-  const far = await fetchCouncilZones(bboxAround([51.5724, -0.1941], 500), { fetchImpl }); // Golders Green
+  const far = await fetchCouncilZones(bboxAround([51.3762, -0.0982], 500), { fetchImpl }); // Croydon
   assert.equal(far.skipped, true);
   assert.equal(urls.length, 1);
 });
