@@ -66,5 +66,6 @@ export function distanceToOption(p, option) {
   if (option.polygons) {
     return inPolygon(p, option.polygons) ? 0 : Math.min(...option.polygons.map((ring) => distanceToLine(p, ring)));
   }
-  return Math.min(...option.lines.map((line) => distanceToLine(p, line)));
+  if (option.lines) return Math.min(...option.lines.map((line) => distanceToLine(p, line)));
+  return 0; // An area-wide note, such as "no parking zone here".
 }

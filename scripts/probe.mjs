@@ -10,9 +10,10 @@
 
 import { geocode, reverseGeocode } from '../src/geocode.js';
 import { fetchSuggestions } from '../src/suggest.js';
-import { overpassQuery, parseOsm } from '../src/sources/osm.js';
+import { overpassQuery, parseOsm, firstSuccessful, OVERPASS_URLS } from '../src/sources/osm.js';
 import { fetchCamden } from '../src/sources/camden.js';
-import { fetchCouncilZones } from '../src/sources/council-zones.js';
+import { fetchCouncilZones, outsideZones } from '../src/sources/council-zones.js';
+import { fetchKerbside } from '../src/sources/kerbside.js';
 import { zoneOptions, normaliseName } from '../src/sources/zones.js';
 import { evaluateOption, STATUS_RANK } from '../src/evaluate.js';
 import { londonClock } from '../src/schedule.js';
@@ -55,14 +56,21 @@ if (coords) {
   dest = await geocode(query, { fetchImpl });
 }
 console.log(`\nDestination: ${dest.label}  ${dest.point.join(',')}${dest.street ? `  street=${dest.street}` : ''}`);
+// Which council's data would cover this place.
+const council = await fetchImpl(`https://api.postcodes.io/postcodes?lon=${dest.point[1]}&lat=${dest.point[0]}&limit=1`)
+  .then((r) => r.json())
+  .then(({ result }) => result?.[0])
+  .catch(() => null);
+if (council) console.log(`Council: ${council.admin_district} (ward: ${council.admin_ward}, nearest postcode ${council.postcode})`);
 
 const area = bboxAround(dest.point, radius);
-const overpass = await fetchImpl('https://overpass-api.de/api/interpreter', {
-  method: 'POST',
-  body: new URLSearchParams({ data: overpassQuery(area, { street: dest.street, center: dest.point }) }),
+const body = new URLSearchParams({ data: overpassQuery(area, { street: dest.street, center: dest.point }) });
+// Same servers and fallback as the app.
+const json = await firstSuccessful(OVERPASS_URLS, 6000, async (url, signal) => {
+  const res = await fetchImpl(url, { method: 'POST', body, signal });
+  if (!res.ok) throw new Error(`Overpass (${new URL(url).host}) returned ${res.status}`);
+  return res.json();
 });
-if (!overpass.ok) throw new Error(`Overpass returned ${overpass.status}`);
-const json = await overpass.json();
 const osm = parseOsm(json);
 
 const roads = json.elements.filter((e) => e.tags?.highway);
@@ -77,14 +85,17 @@ console.log(`Camden bays: ${camden.skipped ? 'outside Camden' : camden.error ? `
 const zones = zoneOptions(osm.streets);
 console.log(`Council zone streets (data/zones.js): ${zones.length}`);
 const councilZones = await fetchCouncilZones(area, { fetchImpl }).catch((err) => ({ options: [], error: err.message }));
+councilZones.options.push(...outsideZones(councilZones, council?.admin_district, dest.point));
+const kerbside = await fetchKerbside(area, { fetchImpl }).catch((err) => ({ options: [], error: err.message }));
+console.log(`Council kerbside map: ${kerbside.skipped ? 'no borough layer here' : kerbside.error ? `failed (${kerbside.error})` : `${kerbside.options.length} kinds of restriction`}`);
 console.log(`Council zone map: ${councilZones.skipped ? 'no borough layer here' : councilZones.error ? `failed (${councilZones.error})` : councilZones.options.map((z) => z.title).join(', ') || 'none'}`);
 
 const clock = londonClock(at ? new Date(at) : new Date());
 const destStreet = dest.street && normaliseName(dest.street);
-const options = [...osm.options, ...zones, ...camden.options, ...councilZones.options]
+const options = [...osm.options, ...zones, ...camden.options, ...councilZones.options, ...kerbside.options]
   .map((o) => {
     const distance = distanceToOption(dest.point, o);
-    const here = o.kind === 'zone' ? distance === 0 : Boolean(destStreet && normaliseName(o.title) === destStreet);
+    const here = o.kind === 'zone' || o.kind === 'area' ? distance === 0 : Boolean(destStreet && normaliseName(o.title) === destStreet);
     return { ...evaluateOption(o, clock, stay), distance, here };
   })
   .filter((o) => o.here || o.distance <= radius)
@@ -92,7 +103,7 @@ const options = [...osm.options, ...zones, ...camden.options, ...councilZones.op
 
 console.log(`\nResults for ${clock.date} ${String(Math.floor(clock.minutes / 60)).padStart(2, '0')}:${String(clock.minutes % 60).padStart(2, '0')}, staying ${stay} min:`);
 for (const o of options) {
-  const where = o.here ? (o.kind === 'zone' ? 'you are in it' : 'your street') : `${Math.round(o.distance)} m`;
+  const where = o.here ? (o.kind === 'zone' ? 'you are in it' : o.kind === 'area' ? 'here' : 'your street') : `${Math.round(o.distance)} m`;
   console.log(`  [${o.status.toUpperCase()}] ${o.title} (${where}) - ${o.source}${o.subtitle ? ` - ${o.subtitle}` : ''}`);
   for (const r of o.results) console.log(`      ${r.label ? `${r.label}: ` : ''}${r.summary}${r.detail ? `  [${r.detail}]` : ''}`);
 }

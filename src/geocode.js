@@ -67,3 +67,11 @@ export async function reverseGeocode([lat, lon], { fetchImpl = fetch, signal } =
     return { label: result[0].postcode, street: null };
   }
 }
+
+/** The council (local authority) a point is in, e.g. "Sutton", or null when unknown. */
+export async function councilAt([lat, lon], { fetchImpl = fetch } = {}) {
+  const res = await fetchImpl(`https://api.postcodes.io/postcodes?lon=${lon}&lat=${lat}&radius=300&limit=1`);
+  if (!res.ok) return null;
+  const { result } = await res.json();
+  return result?.[0]?.admin_district ?? null;
+}

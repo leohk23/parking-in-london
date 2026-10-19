@@ -35,7 +35,9 @@ export function parseSchedule(text) {
     .toLowerCase()
     .replace(/[‐-―]/g, '-')
     .split(/\bmax(?:imum)?\b|\bno return\b/)[0]
-    .replace(ALL_DAY_RE, ' 00:00-24:00 ');
+    .replace(ALL_DAY_RE, ' 00:00-24:00 ')
+    // Durations ("limited waiting 2 hours") aren't clock times.
+    .replace(/\b\d+(?:\.\d+)?\s*(?:hours?|hrs?|mins?|minutes?)\b/g, ' ');
 
   const tokens = tokenize(clean);
   if (!tokens) return null;
