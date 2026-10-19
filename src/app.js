@@ -157,6 +157,8 @@ $('#radius').addEventListener('change', () => {
   render();
 });
 $('#sort').addEventListener('change', render);
+// The app menu (the P logo) closes when you tap anywhere else.
+document.addEventListener('click', (e) => !e.target.closest('.apps') && $('.apps').removeAttribute('open'));
 // The info box closes with its button, Escape, or a tap outside it.
 $('#info').addEventListener('click', (e) => e.target === $('#info') && $('#info').close());
 
@@ -317,7 +319,7 @@ function render() {
   // Options are kept for the radius searched, which can be bigger than the one shown.
   const inRange = current.options.filter((o) => o.here || o.distance <= radius);
 
-  const options = inRange
+  const sorted = inRange
     .filter((o) => !freeOnly || o.status === 'free')
     .sort((a, b) =>
       sort === 'near'
@@ -337,9 +339,14 @@ function render() {
   );
   $('.controls').hidden = false;
 
-  drawMap(dest, options);
-  $('#list').innerHTML = options.length
-    ? options.map((o) => `<li class="card ${o.status}" tabindex="0" data-id="${esc(o.id)}">${cardHtml(o)}</li>`).join('')
+  // Street bays with no terms mapped are one card at the end of the list, not one each.
+  const unmapped = sorted.filter((o) => o.group === 'street-bays' && o.status === 'unknown');
+  const options = sorted.filter((o) => !unmapped.includes(o));
+
+  drawMap(dest, sorted);
+  $('#list').innerHTML = sorted.length
+    ? options.map((o) => `<li class="card ${o.status}" tabindex="0" data-id="${esc(o.id)}">${cardHtml(o)}</li>`).join('') +
+      (unmapped.length ? `<li class="card unknown" tabindex="0" data-group="street-bays">${unmappedCardHtml(unmapped)}</li>` : '')
     : `<li class="status">${
         current.loading
           ? 'Loading…'
@@ -348,7 +355,8 @@ function render() {
             : 'No parking data found nearby. OpenStreetMap coverage of street parking is patchy outside some areas.'
       }</li>`;
   for (const el of document.querySelectorAll('#list .card')) {
-    const open = (e) => !e.target.closest('a, .info') && focusOption(el.dataset.id);
+    const open = (e) =>
+      !e.target.closest('a, .info') && (el.dataset.group ? focusGroup(el, unmapped) : focusOption(el.dataset.id));
     el.addEventListener('click', open);
     el.addEventListener('keydown', (e) => e.key === 'Enter' && open(e));
   }
@@ -406,6 +414,26 @@ function focusOption(id) {
   if (layer.getBounds) map.fitBounds(layer.getBounds(), { maxZoom: 18, padding: [30, 30] });
   else map.setView(layer.getLatLng(), Math.max(map.getZoom(), 17));
   layer.openPopup();
+  if (window.matchMedia('(max-width: 899px)').matches) $('#map').scrollIntoView({ behavior: 'smooth' });
+}
+
+function unmappedCardHtml(bays) {
+  const nearest = Math.min(...bays.map((o) => o.distance));
+  return `
+    <div class="card-head">
+      <span class="badge unknown">${STATUS_LABELS.unknown}</span>
+      <span class="card-title">${bays.length} street-side ${bays.length > 1 ? 'bays' : 'bay'}</span>
+      <span class="card-dist">from ${Math.round(nearest / 10) * 10} m</span>
+    </div>
+    <div class="card-sub">OpenStreetMap shows these bays but not whether they're free, paid or time-limited: check the signs.</div>`;
+}
+
+/** Shows every bay in the group on the map. */
+function focusGroup(el, bays) {
+  document.querySelectorAll('#list .card.selected').forEach((c) => c.classList.remove('selected'));
+  el.classList.add('selected');
+  const bounds = L.latLngBounds(bays.flatMap((o) => (o.point ? [o.point] : o.lines?.flat() ?? o.polygons?.flat() ?? [])));
+  if (bounds.isValid()) map.fitBounds(bounds, { maxZoom: 18, padding: [30, 30] });
   if (window.matchMedia('(max-width: 899px)').matches) $('#map').scrollIntoView({ behavior: 'smooth' });
 }
 
