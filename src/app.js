@@ -148,8 +148,14 @@ for (const type of ['input', 'change']) {
 setInterval(showNowTime, 30000);
 document.addEventListener('visibilitychange', showNowTime);
 $('#freeOnly').addEventListener('change', render);
-// A new radius re-runs the current search straight away.
-$('#radius').addEventListener('change', () => current && search({ dest: current.dest }));
+// A smaller radius than the last search only filters and zooms; a bigger one searches again.
+$('#radius').addEventListener('change', () => {
+  if (!current) return;
+  if (Number($('#radius').value) > current.radius) return search({ dest: current.dest });
+  current.viewed = false;
+  saveToUrl($('#q').value);
+  render();
+});
 $('#sort').addEventListener('change', render);
 // The info box closes with its button, Escape, or a tap outside it.
 $('#info').addEventListener('click', (e) => e.target === $('#info') && $('#info').close());
@@ -274,7 +280,7 @@ async function search({ query, dest }) {
       { name: 'Camden bay data', load: fetchCamden(area).then((r) => r.options) },
     ];
     const waiting = new Set(sources.map((src) => src.name));
-    current = { dest, options: [], clock, sourceNotes: [], loading: true };
+    current = { dest, radius, options: [], clock, sourceNotes: [], loading: true };
     showProgress('Loading parking data…');
     render();
 
@@ -307,8 +313,11 @@ function render() {
   const { dest, clock, sourceNotes } = current;
   const freeOnly = $('#freeOnly').checked;
   const sort = $('#sort').value;
+  const radius = Number($('#radius').value);
+  // Options are kept for the radius searched, which can be bigger than the one shown.
+  const inRange = current.options.filter((o) => o.here || o.distance <= radius);
 
-  const options = current.options
+  const options = inRange
     .filter((o) => !freeOnly || o.status === 'free')
     .sort((a, b) =>
       sort === 'near'
@@ -316,7 +325,7 @@ function render() {
         : b.here - a.here || STATUS_RANK[a.status] - STATUS_RANK[b.status] || a.distance - b.distance,
     );
 
-  const counts = current.options.reduce((acc, o) => ({ ...acc, [o.status]: (acc[o.status] ?? 0) + 1 }), {});
+  const counts = inRange.reduce((acc, o) => ({ ...acc, [o.status]: (acc[o.status] ?? 0) + 1 }), {});
   const warnings = [...sourceNotes];
   if (isBankHoliday(clock.date)) {
     warnings.push("It's a bank holiday. Many zones don't operate today, but some do. Check the signs.");
