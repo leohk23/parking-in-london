@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { fetchSuggestions, queryVariants, photonLabel } from '../src/suggest.js';
 
 const reply = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
-const photonFeature = (properties, [lon, lat]) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties });
+// Places in London, as Photon tags them; pass county to say otherwise.
+const photonFeature = (properties, [lon, lat]) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: { county: 'Greater London', ...properties } });
 
 test('query variants swap "and"/"&" and add London', () => {
   assert.deepEqual(queryVariants('Elephant and Castle'), [
@@ -24,7 +25,7 @@ test('Photon labels read like an address', () => {
   assert.equal(photonLabel({ name: 'Wimbledon Park Road', type: 'street', city: 'London' }), 'Wimbledon Park Road, London');
 });
 
-test('places come from Photon, limited to London, with streets and duplicates handled', async () => {
+test('places come from Photon, limited to Greater London, with streets and duplicates handled', async () => {
   const urls = [];
   const fetchImpl = async (url) => {
     urls.push(url);
@@ -33,11 +34,12 @@ test('places come from Photon, limited to London, with streets and duplicates ha
         photonFeature({ name: 'Wimbledon Park Road', type: 'street', city: 'London', postcode: 'SW18' }, [-0.204, 51.444]),
         photonFeature({ name: 'Wimbledon Park Road', type: 'street', city: 'London', postcode: 'SW18' }, [-0.2, 51.45]),
         photonFeature({ housenumber: '12', street: 'Wimbledon Park Road', type: 'house', city: 'London' }, [-0.205, 51.443]),
+        photonFeature({ name: 'Epsom Road', type: 'street', city: 'Epsom', county: 'Surrey' }, [-0.27, 51.33]),
       ],
     });
   };
   const found = await fetchSuggestions('wimbledon park rd', { fetchImpl });
-  assert.match(urls[0], /^https:\/\/photon\.komoot\.io\/api\/\?q=wimbledon\+park\+rd&limit=6&lang=en&bbox=-0\.6%2C51\.2%2C0\.4%2C51\.85$/);
+  assert.match(urls[0], /^https:\/\/photon\.komoot\.io\/api\/\?q=wimbledon\+park\+rd&limit=18&lang=en&bbox=-0\.6%2C51\.2%2C0\.4%2C51\.85$/);
   assert.deepEqual(found, [
     { label: 'Wimbledon Park Road, London, SW18', point: [51.444, -0.204], street: 'Wimbledon Park Road' },
     { label: '12 Wimbledon Park Road, London', point: [51.443, -0.205], street: 'Wimbledon Park Road' },
@@ -61,8 +63,8 @@ test('postcodes, even partial ones, come from postcodes.io', async () => {
     urls.push(url);
     return reply({
       result: [
-        { postcode: 'W6 0LF', admin_ward: 'Ravenscourt', latitude: 51.4957, longitude: -0.2437 },
-        { postcode: 'W6 0LG', admin_ward: 'Ravenscourt', latitude: 51.4959, longitude: -0.2431 },
+        { postcode: 'W6 0LF', admin_ward: 'Ravenscourt', region: 'London', latitude: 51.4957, longitude: -0.2437 },
+        { postcode: 'W6 0LG', admin_ward: 'Ravenscourt', region: 'London', latitude: 51.4959, longitude: -0.2431 },
       ],
     });
   };

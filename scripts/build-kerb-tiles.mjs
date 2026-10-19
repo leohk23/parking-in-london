@@ -379,6 +379,113 @@ export function tileFile(elements) {
   return { w: [...words.keys()].map((k) => JSON.parse(k)), e };
 }
 
+// Islington's zones are only in its MapThat map, which wants a session.
+const MAPTHAT = 'https://map.islington.gov.uk/MapThatPublic';
+const ISLINGTON_CPZ_NODE = 224; // "Controlled Parking Zones (CPZ)" in its layer tree
+
+async function islingtonZones() {
+  const cookies = new Map();
+  const call = async (path, body) => {
+    for (let i = 1; ; i++) {
+      try {
+        const res = await fetch(`${MAPTHAT}${path}`, {
+          method: body ? 'POST' : 'GET',
+          headers: {
+            'User-Agent': 'Mozilla/5.0',
+            Cookie: [...cookies].map(([k, v]) => `${k}=${v}`).join('; '),
+            ...(body && { 'Content-Type': 'application/json; charset=utf-8' }),
+          },
+          body: body && JSON.stringify(body),
+          signal: AbortSignal.timeout(120_000),
+        });
+        for (const c of res.headers.getSetCookie()) {
+          const [pair] = c.split(';');
+          const eq = pair.indexOf('=');
+          cookies.set(pair.slice(0, eq).trim(), pair.slice(eq + 1));
+        }
+        return await res.text();
+      } catch (err) {
+        // Its server drops connections now and then.
+        if (i >= 4) throw err;
+        await new Promise((r) => setTimeout(r, 3000 * i));
+      }
+    }
+  };
+  await call('/login.html?user=public');
+  await call('/Api/User', { LOGON_ID: 'Public', PASSWORD: 'xyz', IS_OPEN_ACCESS: true });
+  await call('/Api/UserProject', { USER_ID: 1, ROLE_ID: 2, PROJECT_ID: 2 });
+  await call('/Api/User/TermsAndCondition', { LOGON_ID: 'Public' });
+  await call('/Default.aspx');
+  const tree = JSON.parse(await call('/Default.aspx/GetMapThatData', {})).d.TreeNodes;
+  const guid = tree.find((n) => n.TreeID === ISLINGTON_CPZ_NODE)?.UniqueGUID;
+  if (!guid) throw new Error('no CPZ layer in the MapThat tree');
+  // The whole borough: north-east latitude, south-west longitude, south-west latitude, north-east longitude.
+  const layer = JSON.parse(
+    await call('/Default.aspx/GetGraphicsLayer', {
+      UniqueGUID: guid, Lat1: 51.6, Lon1: -0.16, Lat2: 51.5, Lon2: -0.06,
+      AreaSearchpoints: null, isNewSelectTool: false, showAllRecordsInHitsPanel: false, exportToExcel: false, temporalFilter: '', areaFilterType: '',
+    }),
+  ).d[1];
+  return { type: 'FeatureCollection', features: layer.map((f) => islingtonZone(f.RawData1, f.RawData2, f.GeometryWKT)) };
+}
+
+/** One Islington zone: its columns (CPZ, AREA_NAME, MON_TO_FRI, SAT, ADDITIONAL_MATCH_DAY_CONTROLS) as comma-joined text, and WKT in lon/lat. */
+export function islingtonZone(columns, values, wkt) {
+  const v = Object.fromEntries(columns.split(',').map((k, i) => [k, values.split(',')[i]?.trim()]));
+  const zone = v.CPZ.replace(/^Zone\s+/i, '').replace(/\s+Matchday$/i, '');
+  const none = (t) => !t || /^none$/i.test(t);
+  // "Restrictions operate 24 hours a day" (Zones C and K).
+  const allDay = (t) => /24 hours/i.test(t ?? '');
+  let hours;
+  if (allDay(v.MON_TO_FRI) && allDay(v.SAT) && /sunday/i.test(v.SAT)) hours = 'Mon-Sat at any time; Sun midnight-6am';
+  else if (allDay(v.MON_TO_FRI) && allDay(v.SAT)) hours = 'At any time';
+  else hours = [`Mon-Fri ${v.MON_TO_FRI}`, !none(v.SAT) && `Sat ${v.SAT}`].filter(Boolean).join('; ');
+  const matchDay = none(v.ADDITIONAL_MATCH_DAY_CONTROLS) ? [] : [`Also on Emirates match days: ${v.ADDITIONAL_MATCH_DAY_CONTROLS.split('~').map((t) => t.trim()).join(', ')}.`];
+  // Area names are often just the zone again; Zone E's match-day part is its own outline.
+  const area = /matchday$/i.test(v.CPZ) ? 'Match day area' : v.AREA_NAME && !/^zone\b/i.test(v.AREA_NAME) ? v.AREA_NAME : undefined;
+  const rings = [...wkt.matchAll(/\(([^()]+)\)/g)].map(([, ring]) => ring.split(',').map((pair) => pair.trim().split(/\s+/).map(Number)));
+  return zoneFeature({ zone, area, hours, notes: matchDay }, { type: 'Polygon', coordinates: rings });
+}
+
+const HARINGEY_WFS = 'https://my.haringey.gov.uk/getows.ashx?mapsource=mapsources/AllMaps&service=WFS&version=1.0.0&request=GetFeature&typename=Controlled_Parking_Zones';
+
+async function haringeyZones() {
+  const gml = await get(HARINGEY_WFS);
+  const features = [];
+  for (const [, body] of gml.matchAll(/<ms:Controlled_Parking_Zones[^>]*>([\s\S]*?)<\/ms:Controlled_Parking_Zones>/g)) {
+    const name = decode(/<ms:cpz_name>([^<]*)</.exec(body)?.[1] ?? '');
+    const times = decode(/<ms:op_times>([^<]*)</.exec(body)?.[1] ?? '');
+    // Polygons, each an outer ring then any holes, as "x,y x,y …" in British National Grid.
+    const polygons = [...body.matchAll(/<gml:Polygon>([\s\S]*?)<\/gml:Polygon>/g)].map(([, polygon]) =>
+      [...polygon.matchAll(/<gml:coordinates[^>]*>([^<]*)<\/gml:coordinates>/g)].map(([, text]) =>
+        text.trim().split(/\s+/).map((pair) => {
+          const [lat, lon] = osgbToWgs84(...pair.split(',').map(Number));
+          return [lon, lat];
+        }),
+      ),
+    );
+    if (polygons.length) features.push(zoneFeature({ ...haringeyHours(times, name), area: name }, { type: 'MultiPolygon', coordinates: polygons }));
+  }
+  return { type: 'FeatureCollection', features };
+}
+
+/**
+ * Haringey's hours, without the event-day controls that follow them ("…, and
+ * on event days (Tottenham Hotspur Stadium): …"), which go into notes.
+ */
+export function haringeyHours(text, name = '') {
+  const t = text.replace(/â€“/g, '–').replace(/\s+/g, ' ').trim();
+  // Event-day zones: "Tottenham Event Day", or hours starting "Event Days (…)".
+  if (/event day/i.test(name) || /^event days?\b/i.test(t)) {
+    return { hours: '', eventOnly: true, notes: [`Controlled on event days: ${t.replace(/^event days?\s*(\([^)]*\))?\s*:?\s*/i, '')}`] };
+  }
+  const cut = /,?\s*\.?\s*(?:and|or)\s+(on|for|in)\s+(.*)$/i.exec(t);
+  if (!cut) return { hours: t, notes: [] };
+  const [, prep, rest] = cut;
+  const note = prep.toLowerCase() === 'in' ? `In ${rest.replace(/\s*-\s*(?=monday)/i, ': ')}` : `Also ${prep.toLowerCase()} ${rest}`;
+  return { hours: t.slice(0, cut.index), notes: [note.endsWith('.') ? note : `${note}.`] };
+}
+
 /** Every tile an element's bounding box touches. */
 function tilesOf(el) {
   const points = (el.g ?? el.p).flat();
@@ -413,7 +520,7 @@ async function main(dataDir) {
     try {
       const started = Date.now();
       const found = await job();
-      console.log(`${id}: ${found} restrictions in ${((Date.now() - started) / 1000).toFixed(0)} s`);
+      console.log(`${id}: ${found} in ${((Date.now() - started) / 1000).toFixed(0)} s`);
       sources[id] = date;
     } catch (err) {
       failures++;
@@ -447,6 +554,20 @@ async function main(dataDir) {
     if (z.features.length) await writeFile(`${dataDir}/zones/harrow.json`, JSON.stringify(z));
     elements.push(...found);
     return found.length;
+  });
+  await run('islington and haringey zones', async () => {
+    let found = 0;
+    for (const [id, load] of [['islington', islingtonZones], ['haringey', haringeyZones]]) {
+      try {
+        const z = await load();
+        if (z.features.length < 20) throw new Error(`only ${z.features.length} zones`);
+        await writeFile(`${dataDir}/zones/${id}.json`, JSON.stringify(z));
+        found += z.features.length;
+      } catch (err) {
+        console.log(`::warning::${id} zone map not copied: ${err.message}`);
+      }
+    }
+    return found;
   });
   await run('westminster', async () => {
     const found = await westminsterKerb();

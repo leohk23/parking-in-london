@@ -108,7 +108,7 @@ test('Harrow and Enfield zones, copied from the councils', () => {
   assert.equal(evaluateOption(grange, monday, 60).results[0].summary, 'Free until Tue 10:00, then pay or permit');
   assert.equal(spurs.title, 'Zone SE');
   assert.equal(spurs.subtitle, 'Spurs Event Day · Enfield controlled parking zone');
-  assert.equal(spurs.parts[0].otherwise.label, 'Controlled on Spurs event days: check the signs');
+  assert.equal(spurs.parts[0].otherwise.label, 'Free except on event days: check the signs');
 });
 
 test("Westminster bays get their sub-zone's hours from the transcribed PDF", async () => {
@@ -121,4 +121,36 @@ test("Westminster bays get their sub-zone's hours from the transcribed PDF", asy
   assert.equal(rule('SHARED USE BAY', 'B6', 'PORCHESTER TERRACE'), 'Pay to park until 18:30, then free');
   assert.equal(rule('MOTORCYCLE BAY', 'G1', 'DEAN STREET'), 'Motorcycles only');
   assert.equal(rule('HOSPITAL BAY', 'F2', 'PRAED STREET'), 'Hospital only');
+});
+
+test('Islington zones from its MapThat map', async () => {
+  const { islingtonZone } = await import('../scripts/build-kerb-tiles.mjs');
+  const columns = 'CPZ,AREA_NAME,MON_TO_FRI,SAT,ADDITIONAL_MATCH_DAY_CONTROLS,AREA_SQ_KM,AREA,';
+  const wkt = 'POLYGON ((-0.12 51.55, -0.11 51.55, -0.11 51.56, -0.12 51.55))';
+  const zone = (values) => parseZones({ features: [islingtonZone(columns, values, wkt)] }, ZONE_LAYERS.find((l) => l.id === 'islington'))[0];
+  const y = zone('Zone Y,Holloway East,8.30am - 6.30pm,8.30am - 1.30pm,Monday - Friday 6.30pm - 8.30pm~ Saturday 1:30pm 4:30pm~ Sunday and public holidays 12 noon - 4.30pm,,,');
+  assert.equal(y.title, 'Zone Y');
+  assert.equal(y.subtitle, 'Holloway East · Islington controlled parking zone');
+  assert.equal(y.parts[0].detail, 'Mon-Fri 8.30am - 6.30pm; Sat 8.30am - 1.30pm');
+  assert.match(y.notes[0], /^Also on Emirates match days: Monday - Friday 6.30pm - 8.30pm, Saturday/);
+  const c = zone('Zone C,Zone C,Restrictions operate 24 hours a day,Restrictions operate 24 hours Saturday. Sunday: Midnight - 6:00am,None,,,');
+  assert.equal(c.subtitle, 'Islington controlled parking zone');
+  assert.equal(evaluateOption(c, monday, 60).results[0].summary, 'Pay or permit until Sun 06:00, then free');
+  assert.equal(zone('Zone E Matchday,Zone E,8.30am - 6.30pm,8.30am - 1.30pm,None,,,').subtitle, 'Match day area · Islington controlled parking zone');
+});
+
+test("Haringey's hours, with event days kept apart", async () => {
+  const { haringeyHours } = await import('../scripts/build-kerb-tiles.mjs');
+  assert.deepEqual(haringeyHours('Monday to Friday: 10am to 12 noon, and in Priory Gardens - Monday to Saturday: 8am to 6.30pm'), {
+    hours: 'Monday to Friday: 10am to 12 noon',
+    notes: ['In Priory Gardens: Monday to Saturday: 8am to 6.30pm.'],
+  });
+  assert.equal(haringeyHours('Monday to Sunday: 8am - 6.30pm, and on event days (Tottenham Hotspur Stadium): Monday to Friday 8am - 8.30pm').hours, 'Monday to Sunday: 8am - 6.30pm');
+  const event = haringeyHours('Monday to Friday: 5pm to 8.30pm, and Saturday, Sunday and Public Holidays: 12 noon to 8pm', 'Tottenham Event Day');
+  assert.equal(event.eventOnly, true);
+  const [zone] = parseZones(
+    { features: [{ properties: { area: 'Tottenham Event Day', ...event }, geometry: { type: 'Polygon', coordinates: [[[-0.07, 51.59], [-0.06, 51.59], [-0.06, 51.6], [-0.07, 51.59]]] } }] },
+    ZONE_LAYERS.find((l) => l.id === 'haringey'),
+  );
+  assert.equal(evaluateOption(zone, monday, 60).results[0].summary, 'Free except on event days: check the signs');
 });
