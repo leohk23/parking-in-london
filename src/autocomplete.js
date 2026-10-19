@@ -39,7 +39,9 @@ export function attachSuggestions(input, list, { onPick, recent, fetchImpl, dela
   };
 
   const renderItems = () => {
-    if (!items.length) return show('<li class="suggestion-note">No suggestions found</li>');
+    if (!items.length) {
+      return show('<li class="suggestion-note">No suggestions found. Can\'t find it? Long-press the map to drop a pin.</li>');
+    }
     const icon = showingRecent ? CLOCK_ICON : PIN_ICON;
     show(
       (showingRecent ? '<li class="suggestion-heading" role="presentation">Recent</li>' : '') +
