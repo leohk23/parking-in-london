@@ -37,21 +37,34 @@
 html,
 body {
   margin: 0;
+}
+
+html {
   height: 100%;
 }
 
+/* On phones the page scrolls (map, then list) under the search bar. */
 body {
   background: var(--bg);
   color: var(--text);
   font: 15px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   display: flex;
   flex-direction: column;
+  min-height: 100%;
 }
 
+/* The search bar floats at the bottom of the screen, within thumb reach. */
 .top {
+  order: 1;
+  position: sticky;
+  bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  z-index: 1050;
+  margin: 0 8px calc(8px + env(safe-area-inset-bottom, 0px));
+  padding: 8px 10px;
   background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 4px 24px rgb(0 0 0 / 0.18);
 }
 
 .visually-hidden {
@@ -110,14 +123,14 @@ select {
   min-width: 0;
 }
 
-/* Suggestions span the whole search row and sit above the map. */
+/* Suggestions span the whole search row and open upwards, over the map. */
 .search-row {
   position: relative;
 }
 
 .suggestions {
   position: absolute;
-  top: calc(100% + 4px);
+  bottom: calc(100% + 6px);
   left: 0;
   right: 0;
   z-index: 1100;
@@ -127,8 +140,8 @@ select {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
-  max-height: 60vh;
+  box-shadow: 0 -4px 20px rgb(0 0 0 / 0.18);
+  max-height: min(60vh, 440px);
   overflow-y: auto;
 }
 
@@ -307,7 +320,7 @@ button.busy::after,
 }
 
 .progress {
-  margin: 6px 0 0;
+  margin: 0 0 6px;
   font-size: 14px;
   color: var(--text);
 }
@@ -336,6 +349,13 @@ button.busy::after,
 }
 
 @media (min-width: 900px) {
+  /* Map and list fill the window side by side, with the search bar beneath. */
+  body {
+    height: 100%;
+  }
+  .top {
+    margin: 8px;
+  }
   .layout {
     grid-template-rows: none;
     grid-template-columns: minmax(0, 1fr) 420px;
@@ -425,6 +445,24 @@ button.busy::after,
   gap: 8px;
 }
 
+/* A small target in the card's corner, padded out so it's easy to tap. */
+button.info {
+  flex: none;
+  align-self: center;
+  min-height: 0;
+  margin: -6px -8px -6px -4px;
+  padding: 6px 8px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  line-height: 0;
+}
+
+button.info:hover,
+button.info:focus-visible {
+  color: var(--accent);
+}
+
 .card-title {
   font-weight: 650;
   flex: 1;
@@ -459,7 +497,6 @@ button.busy::after,
 }
 
 .card-sub,
-.card-src,
 .card small {
   color: var(--muted);
   font-size: 13px;
@@ -501,24 +538,60 @@ button.busy::after,
   display: block;
 }
 
-.notes {
-  margin: 6px 0 0;
+.info-dialog {
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100dvh - 64px);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 10px 40px rgb(0 0 0 / 0.3);
+}
+
+.info-dialog::backdrop {
+  background: rgb(0 0 0 / 0.35);
+}
+
+.info-dialog .close {
+  float: right;
+  margin: 8px 8px 0 0;
+  width: 36px;
+  min-height: 36px;
+  padding: 0;
+}
+
+#info-body {
+  padding: 14px 16px 16px;
+}
+
+#info-body h2 {
+  margin: 0 40px 2px 0;
+  font-size: 17px;
+}
+
+.info-sub,
+.info-src {
+  margin: 0;
   font-size: 13px;
   color: var(--muted);
 }
 
-.notes summary {
-  cursor: pointer;
-  width: fit-content;
-}
-
-.notes ul {
-  margin: 4px 0 0;
+.info-notes {
+  margin: 10px 0;
   padding-left: 18px;
+  font-size: 14px;
+  display: grid;
+  gap: 6px;
 }
 
-.card-src a {
+.info-src {
+  margin-top: 10px;
+}
+
+.info-src a {
   color: var(--accent);
+  font-weight: 600;
 }
 
 .disclaimer {

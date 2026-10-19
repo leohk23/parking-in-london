@@ -75,3 +75,12 @@ test('bank holidays', () => {
   assert.equal(isBankHoliday('2027-12-28'), true);
   assert.equal(isBankHoliday('2026-10-18'), false);
 });
+
+test('days sharing hours with bank holidays, and "12.00 midday"', () => {
+  const w3 = parseSchedule('Mon-Sat 8:30am - 11:00pm; Sun & Bank Holidays 2:00pm - 6:00pm');
+  assert.deepEqual(w3.byDay[0], [[14 * 60, 18 * 60]]);
+  assert.deepEqual(w3.byDay[6], [[8 * 60 + 30, 23 * 60]]);
+  assert.equal(w3.mentionsBankHolidays, true);
+  assert.deepEqual(parseSchedule('Monday - Friday 11.00am - 12.00 Midday').byDay[1], [[11 * 60, 12 * 60]]);
+  assert.deepEqual(parseSchedule('Mon-Fri 8am-12 midnight').byDay[1], [[8 * 60, 24 * 60]]);
+});

@@ -86,6 +86,8 @@ export function parseSchedule(text) {
       mentionsBankHolidays = true;
       if (except) {
         except = false;
+      } else if (cur.days && !cur.times.length && !cur.off) {
+        // "Sun & Bank Holidays 2pm-6pm": the bank holidays share the days' hours.
       } else if (!cur.bankHoliday) {
         // "PH off" or "PH 10:00-12:00" starts a bank-holiday-only rule.
         if (cur.days || cur.times.length) flush();
@@ -121,7 +123,10 @@ function tokenize(text) {
     if (h1 !== undefined) tokens.push({ type: 'time', h: +h1, m: +(m1 ?? 0), mer });
     else if (h2 !== undefined) tokens.push({ type: 'time', h: +h2, m: +m2 });
     else if (bare !== undefined) tokens.push({ type: 'time', h: +bare, m: 0, bare: true });
-    else if (named) tokens.push({ type: 'time', named });
+    else if (named && tokens.at(-1)?.type === 'time' && tokens.at(-1).h === 12 && !tokens.at(-1).mer) {
+      // "12.00 midday" is one time, not two.
+      tokens.at(-1).named = named;
+    } else if (named) tokens.push({ type: 'time', named });
     else if (dash) tokens.push({ type: 'dash' });
     else if (sep) tokens.push({ type: 'sep' });
     else if (word) {

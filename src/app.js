@@ -9,7 +9,7 @@ import { fetchOsm } from './sources/osm.js';
 import { fetchCamden } from './sources/camden.js';
 import { fetchCouncilZones, outsideZones } from './sources/council-zones.js';
 import { fetchKerbside } from './sources/kerbside.js';
-import { zoneOptions, zonesCover, normaliseName } from './sources/zones.js';
+import { loadStreetLists, streetListOptions, outsideStreetLists, streetListsCover, normaliseName } from './sources/street-lists.js';
 import { evaluateOption, STATUS_RANK, STATUS_LABELS } from './evaluate.js';
 import { londonClock, isBankHoliday } from './schedule.js';
 import { bboxAround, distanceToOption } from './geo.js';
@@ -18,10 +18,12 @@ const $ = (sel) => document.querySelector(sel);
 const SOURCE_LABELS = {
   osm: 'OpenStreetMap',
   camden: 'Camden Council open data',
-  zones: 'Council zone hours',
+  'street-list': "Council's street list",
   'council-zones': "Council's zone map",
   kerbside: "Council's kerbside map",
 };
+const INFO_ICON =
+  '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 10.5v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="7.3" r="1.3" fill="currentColor"/></svg>';
 const COLORS = () => {
   const css = getComputedStyle(document.documentElement);
   return Object.fromEntries(['free', 'paid', 'no', 'unknown'].map((s) => [s, css.getPropertyValue(`--${s}`).trim()]));
@@ -35,6 +37,8 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
 const resultsLayer = L.layerGroup().addTo(map);
 const youLayer = L.layerGroup().addTo(map);
 const layersById = new Map();
+// Leaflet stops clicks inside popups from reaching the page, so each popup's info button is bound when it opens.
+map.on('popupopen', (e) => bindInfo(e.popup.getElement()));
 
 // Map button that shows where you are, without changing the search.
 const LOCATE_ICON =
@@ -147,6 +151,8 @@ $('#freeOnly').addEventListener('change', render);
 // A new radius re-runs the current search straight away.
 $('#radius').addEventListener('change', () => current && search({ dest: current.dest }));
 $('#sort').addEventListener('change', render);
+// The info box closes with its button, Escape, or a tap outside it.
+$('#info').addEventListener('click', (e) => e.target === $('#info') && $('#info').close());
 
 restoreFromUrl();
 
@@ -245,19 +251,23 @@ async function search({ query, dest }) {
 
     // Each source is shown as soon as it arrives: council zones take under a
     // second, OpenStreetMap can take much longer when its servers are busy.
+    const osm = fetchOsm(area, { street: dest.street, center: dest.point, streets: streetListsCover(area), cache: osmCache });
+    const council = councilAt(dest.point).catch(() => null);
     const sources = [
+      { name: 'OpenStreetMap', load: osm.then((r) => r.options) },
+      // Drawn along OpenStreetMap's streets; your own street is listed even without them.
       {
-        name: 'OpenStreetMap',
-        load: fetchOsm(area, { street: dest.street, center: dest.point, streets: zonesCover(area), cache: osmCache }).then((r) => [
-          ...r.options,
-          ...zoneOptions(r.streets),
+        name: "the council's street list",
+        load: Promise.all([loadStreetLists(area), osm.then((r) => r.streets, () => []), council]).then(([lists, streets, district]) => [
+          ...streetListOptions(lists, { streets, dest }),
+          ...outsideStreetLists(lists, { dest, council: district }),
         ]),
       },
       {
         name: "the council's zone map",
-        load: Promise.all([fetchCouncilZones(area), councilAt(dest.point).catch(() => null)]).then(([r, council]) => [
+        load: Promise.all([fetchCouncilZones(area), council]).then(([r, district]) => [
           ...r.options,
-          ...outsideZones(r, council, dest.point),
+          ...outsideZones(r, district, dest.point),
         ]),
       },
       { name: "the council's kerbside map", load: fetchKerbside(area).then((r) => r.options) },
@@ -329,10 +339,11 @@ function render() {
             : 'No parking data found nearby. OpenStreetMap coverage of street parking is patchy outside some areas.'
       }</li>`;
   for (const el of document.querySelectorAll('#list .card')) {
-    const open = (e) => !e.target.closest('details, a') && focusOption(el.dataset.id);
+    const open = (e) => !e.target.closest('a, .info') && focusOption(el.dataset.id);
     el.addEventListener('click', open);
     el.addEventListener('keydown', (e) => e.key === 'Enter' && open(e));
   }
+  bindInfo($('#list'));
 }
 
 function drawMap(dest, options) {
@@ -368,13 +379,14 @@ function drawMap(dest, options) {
     layer.addTo(resultsLayer);
     layersById.set(o.id, layer);
   }
-  // Zones can be large, so the view fits the destination and nearby spaces only.
-  const bounds = L.latLngBounds([dest.point]);
-  for (const o of drawable.filter((o) => !o.polygons && (o.distance < 600 || o.here))) {
-    if (o.point) bounds.extend(o.point);
-    else o.lines.forEach((line) => bounds.extend(line));
-  }
-  map.fitBounds(bounds.pad(0.1), { maxZoom: 17 });
+  // Once per search, so the view doesn't jump as later sources arrive. Centred
+  // on the destination; for the shorter distances one step closer than the whole
+  // circle, since everything there is a short walk and streets are easier to tell apart.
+  if (current.viewed) return;
+  current.viewed = true;
+  const radius = Number($('#radius').value);
+  const zoom = map.getBoundsZoom(L.latLng(dest.point).toBounds(radius * 2)) + (radius <= 500 ? 1 : 0);
+  map.setView(dest.point, Math.min(zoom, 18));
 }
 
 function focusOption(id) {
@@ -388,7 +400,7 @@ function focusOption(id) {
   if (window.matchMedia('(max-width: 899px)').matches) $('#map').scrollIntoView({ behavior: 'smooth' });
 }
 
-/** `compact` is for map popups: what you need to decide, without subtitle, notes or source. */
+/** `compact` is for map popups: what you need to decide, without the subtitle. Notes and source are behind the info button. */
 function cardHtml(o, { compact = false } = {}) {
   const parts = o.results
     .map(
@@ -398,7 +410,6 @@ function cardHtml(o, { compact = false } = {}) {
         `${r.detail ? `<small>${esc(r.detail)}</small>` : ''}</span></li>`,
     )
     .join('');
-  const notes = [...(o.notes ?? []), ...new Set(o.results.flatMap((r) => r.notes))];
   const partlyFree = o.status === 'free' && o.results.some((r) => r.status !== 'free');
   const where = o.here
     ? o.kind === 'zone'
@@ -412,13 +423,37 @@ function cardHtml(o, { compact = false } = {}) {
       <span class="badge ${o.status}">${partlyFree ? 'Part free' : STATUS_LABELS[o.status]}</span>
       <span class="card-title">${esc(o.title)}</span>
       <span class="card-dist">${where}</span>
+      <button type="button" class="info" data-info="${esc(o.id)}" title="Notes and source" aria-label="Notes and source for ${esc(o.title)}">${INFO_ICON}</button>
     </div>`;
   if (compact) return `${head}<ul class="parts">${parts}</ul>`;
   return `${head}
     ${o.subtitle ? `<div class="card-sub">${esc(o.subtitle)}</div>` : ''}
-    <ul class="parts">${parts}</ul>
-    ${notes.length ? `<details class="notes"><summary>Notes (${notes.length})</summary><ul>${notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></details>` : ''}
-    <div class="card-src">${SOURCE_LABELS[o.source]}${o.checked ? `, checked ${esc(o.checked)}` : ''}${o.link ? ` · <a href="${esc(o.link)}" target="_blank" rel="noopener">source</a>` : ''}</div>`;
+    <ul class="parts">${parts}</ul>`;
+}
+
+/** Info buttons open a box with the option's notes and where the data came from. */
+function bindInfo(root) {
+  // Assigned rather than added: a popup's button is bound again each time it opens.
+  for (const btn of root.querySelectorAll('[data-info]')) {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      showInfo(btn.dataset.info);
+    };
+  }
+}
+
+function showInfo(id) {
+  const o = current?.options.find((x) => x.id === id);
+  if (!o) return;
+  const notes = [...(o.notes ?? []), ...new Set(o.results.flatMap((r) => r.notes))];
+  $('#info-body').innerHTML = `
+    <h2 id="info-title">${esc(o.title)}</h2>
+    ${o.subtitle ? `<p class="info-sub">${esc(o.subtitle)}</p>` : ''}
+    ${notes.length ? `<ul class="info-notes">${notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+    <p class="info-src">Source: ${SOURCE_LABELS[o.source]}${o.checked ? `, updated ${esc(o.checked)}` : ''}${
+      o.link ? `<br /><a href="${esc(o.link)}" target="_blank" rel="noopener">Open the source page</a>` : ''
+    }</p>`;
+  if (!$('#info').open) $('#info').showModal();
 }
 
 function showStatus(html) {

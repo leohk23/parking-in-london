@@ -8,6 +8,8 @@ import { parseSchedule } from '../schedule.js';
 import { bboxesOverlap, inPolygon } from '../geo.js';
 
 const SUTTON_WFS = 'https://sutton.statmap.co.uk/map/wfs.svc/open_data_lbs_wfs';
+const MERTON_CPZ =
+  'https://services-eu1.arcgis.com/lDzXrGJF6LKIhYUB/arcgis/rest/services/Controlled_Parking_Zone_Boundaries/FeatureServer/5';
 
 // `district` is the council's name as postcodes.io gives it, used to tell
 // "outside every zone" apart from "in another borough".
@@ -44,6 +46,20 @@ export const ZONE_LAYERS = [
       };
     },
     link: 'https://www.sutton.gov.uk/info/200195/parking/1296/about_controlled_parking_zones_cpzs/3',
+  },
+  {
+    id: 'merton',
+    borough: 'Merton',
+    district: 'Merton',
+    bbox: [51.385, -0.255, 51.445, -0.14],
+    url: (bbox) => arcgisQuery(MERTON_CPZ, bbox, 'Zone_ID,Zone_Area,Zone_Type,Operation_Summary'),
+    // Operation_Summary reads like "Mon-Sat 8:30am - 6:30pm; Sun 11:00am - 3:00pm".
+    // One area has no zone ID: its bays are pay and display only, at the times on their signs.
+    read: (a) =>
+      a.Zone_ID
+        ? { zone: a.Zone_ID, area: a.Zone_Area, hours: a.Operation_Summary, permitOnly: /permit/i.test(a.Zone_Type ?? '') }
+        : { title: 'Pay and display area', unknown: 'Pay and display bays: times are on the signs' },
+    link: 'https://www.merton.gov.uk/streets-parking-transport/parking/cpz/cpz-list',
   },
 ];
 
@@ -102,14 +118,14 @@ export function parseZones(json, layer) {
     .map((f) => ({ a: f.properties ?? {}, rings: rings(f.geometry) }))
     .filter(({ rings }) => rings.length)
     .map(({ a, rings }) => {
-      const { zone, area, hours, cost, permitOnly } = layer.read(a);
+      const { zone, title, area, hours, cost, permitOnly, unknown } = layer.read(a);
       const schedule = parseSchedule(hours);
       return {
-        id: `zone-${layer.id}-${zone}`,
+        id: `zone-${layer.id}-${zone ?? title}`,
         source: 'council-zones',
         kind: 'zone',
         layer: layer.id,
-        title: `Zone ${zone}`,
+        title: title ?? `Zone ${zone}`,
         subtitle: [area, `${layer.borough} controlled parking zone`].filter(Boolean).join(' · '),
         polygons: rings.map((ring) => ring.map(([lon, lat]) => [lat, lon])),
         parts: [
@@ -117,7 +133,9 @@ export function parseZones(json, layer) {
             label: '',
             detail: [hours, cost].filter(Boolean).join(' · '),
             rules: schedule ? [{ when: schedule, effect: permitOnly ? 'permit' : 'controlled' }] : [],
-            otherwise: schedule ? { effect: 'free' } : { effect: 'unknown', label: `Hours not recognised: ${hours}` },
+            otherwise: schedule
+              ? { effect: 'free' }
+              : { effect: 'unknown', label: unknown ?? `Hours not recognised: ${hours}` },
             notes: [],
           },
         ],

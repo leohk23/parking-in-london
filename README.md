@@ -35,15 +35,15 @@ Searches go in the URL (`?q=Wimbledon+Park+Road&stay=120`), so you can bookmark 
 
 ## Where the data comes from
 
-London has no single open dataset of parking restrictions, so the app combines several sources. Each result shows which source it came from, and each appears as soon as it loads.
+London has no single open dataset of parking restrictions, so the app combines several sources. Each result's ⓘ button shows its notes and which source it came from, and each source's results appear as soon as they load.
 
 | Source | Covers | Notes |
 | --- | --- | --- |
 | [OpenStreetMap](https://www.openstreetmap.org) via the Overpass API | All of London: car parks (fee and opening hours), plus street parking where mappers have tagged it | Street parking coverage is patchy. You can improve it yourself, e.g. with the StreetComplete app. |
-| Councils' own zone maps (`src/sources/council-zones.js`) | Every street in a borough: controlled parking zone boundaries with their days, hours and charges, queried live | Hammersmith & Fulham and Sutton so far. Inside one of these boroughs but outside every zone, the app says there's no parking zone (it checks the borough with postcodes.io). The council's map can lag behind recent changes, so the zone entry sign has the final word. |
+| Councils' own zone maps (`src/sources/council-zones.js`) | Every street in a borough: controlled parking zone boundaries with their days, hours and charges, queried live | Hammersmith & Fulham, Sutton and Merton. Inside one of these boroughs but outside every zone, the app says there's no parking zone (it checks the borough with postcodes.io). The council's map can lag behind recent changes, so the zone entry sign has the final word. |
+| Councils' street lists (`data/wandsworth.json`, `data/kingston.json`) | Every street in a parking zone, drawn on the map along OpenStreetMap's streets | **Wandsworth**: each street's zone, house numbers, hours, charge and maximum stay, from the council's CPZ street finder. **Kingston**, including New Malden: the streets in each zone and permit parking area, from the council's zone pages, with hours from its list of when the rules apply. A street that isn't on the list has no parking zone. |
 | Councils' kerbside maps (`src/sources/kerbside.js`) | Yellow lines, bus stops, school markings and bays, with their times | Sutton so far. |
 | [Camden Council "Parking Bays"](https://opendata.camden.gov.uk/Transport/Parking-Bays/7hiv-3r9k) | Every on-street bay in Camden, with type, times, max stay and tariff | Loaded only when you search in or near Camden. |
-| `data/zones.js` | Controlled parking zone (CPZ) hours for streets you add by hand, taken from council websites | Seeded with Wandsworth's Southfields and Putney A6 zones and Wimbledon Park Road. |
 
 As you type, suggestions come from [Photon](https://photon.komoot.io) (built for search-as-you-type, limited to London) and, for postcodes, [postcodes.io](https://postcodes.io). Pressing Find without picking a suggestion looks the text up with postcodes.io or OpenStreetMap's Nominatim.
 
@@ -59,19 +59,15 @@ node scripts/probe.mjs "Stamford Court, London"    # or a postcode, or 51.4957,-
 
 It prints the geocoder's matches, how much street-parking detail OpenStreetMap has nearby, the council zones, and the same results list the app shows. You can run it without a computer too: Actions → **Probe live data** → Run workflow.
 
-### Adding your streets
+### Councils' street lists
 
-For a borough that doesn't publish bay data, look up the street's zone on the council website and add it to `data/zones.js`:
+Wandsworth's and Kingston's websites can't be read from a browser, so `scripts/update-wandsworth.mjs` and `scripts/update-kingston.mjs` copy their lists into `data/`. The deploy workflow runs them before every deploy and every Monday morning, so the site stays current without commits. If a council's site is down, the copy in the repo is published instead. To refresh the copy in the repo, run the scripts on your computer and commit the result.
 
-1. Add the borough to `BOROUGHS` if it's new. Its `bbox` only needs to be roughly right; it stops a common street name matching in another borough.
-2. Add any missing zones to `ZONES`, with the hours as the sign shows them (e.g. `'Mon-Fri 8.30am-6.30pm'`), the source page and the date you checked.
-3. Add the street to `STREETS` with its zone IDs.
-
-The street is then drawn on the map from OpenStreetMap geometry, using the zone hours.
+Kingston writes its zone hours as prose, so they're kept in `ZONES` in `scripts/update-kingston.mjs`. When the council adds a zone, the script warns and the app shows its streets as "hours on the signs" until the hours are added there.
 
 ## How it decides
 
-- Times like `Mon-Fri 8.30am-6.30pm`, `Mo-Sa 08:00-18:30; Su off` or `At any time` are parsed into a weekly timetable (`src/schedule.js`). Text it can't read reliably, such as "event days", is shown as **Check** rather than guessed.
+- Times like `Mon-Fri 8.30am-6.30pm`, `Mo-Sa 08:00-18:30; Su off`, `Sun & Bank Holidays 2pm-6pm` or `At any time` are parsed into a weekly timetable (`src/schedule.js`). Text it can't read reliably, such as "event days", is shown as **Check** rather than guessed.
 - All times are London time, including clock changes. Bank holidays are flagged, because some zones stop on bank holidays and some don't.
 - Bays and single yellow lines in a CPZ only apply during the hours shown. Outside them they're free, unless a sign says otherwise.
 - A street in several zones (Wimbledon Park Road is in A6, S1 and S5, depending on house number) gets one line per zone. The card says **Part free** when only some zones are free.
@@ -82,5 +78,6 @@ Many councils publish their zone boundaries on an ArcGIS or WFS map service (sea
 
 ## Not covered yet
 
-- Temporary suspensions, event days (football, the Wimbledon Championships) and TfL red routes. The Wimbledon tennis event zone is mentioned in the notes but not applied.
+- Temporary suspensions, event days (football, the Wimbledon Championships) and TfL red routes. The Wimbledon tennis event zone is mentioned in the notes but not applied, and Wandsworth's red-route streets are flagged but not modelled.
+- Kingston lists zones G and G1 together, so those streets show both sets of hours. Some of its zones have outer streets with shorter hours that the council doesn't list by street: the app uses the main hours, and says so in the notes.
 - The Department for Transport's [Digital TRO service](https://d-tro.dft.gov.uk/) should eventually publish every council's traffic orders through one API. It's in public beta, free to register for as a data user, and would be the natural next data source.

@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Weekly, to pick up changes to the councils' street lists.
+  schedule:
+    - cron: '23 4 * * 1'
 
 permissions:
   contents: read
@@ -36,6 +39,15 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Browsers can't read these councils' sites, so their street lists are
+      # copied here. If a site is down, the copy in the repo is published instead.
+      - name: Refresh council street lists
+        run: |
+          node scripts/update-wandsworth.mjs || echo "::warning::Kept the committed Wandsworth list"
+          node scripts/update-kingston.mjs || echo "::warning::Kept the committed Kingston list"
       - uses: actions/configure-pages@v5
       - name: Collect the site files
         run: |
