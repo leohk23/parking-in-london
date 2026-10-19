@@ -10,9 +10,18 @@ import { bboxesOverlap, inPolygon } from '../geo.js';
 const SUTTON_WFS = 'https://sutton.statmap.co.uk/map/wfs.svc/open_data_lbs_wfs';
 const MERTON_CPZ =
   'https://services-eu1.arcgis.com/lDzXrGJF6LKIhYUB/arcgis/rest/services/Controlled_Parking_Zone_Boundaries/FeatureServer/5';
+const LAMBETH_CPZ = 'https://gis.lambeth.gov.uk/arcgis/rest/services/LambethControlledParkingZones/MapServer/1';
+const RBKC_INSPIRE = 'https://www.rbkc.gov.uk/arcgis/rest/services/RBKC/INSPIRE/MapServer';
+const HACKNEY_WFS = 'https://map2.hackney.gov.uk/geoserver/ows';
+const NEWHAM_CPZ = 'https://services1.arcgis.com/trOdpHvvP7HrTfdb/arcgis/rest/services/Controlled_Parking_Zones/FeatureServer/0';
+const RBKC_LINK = 'https://www.rbkc.gov.uk/media/document/controlled-parking-hours-map-september-2024';
+const EVENT_RE = /event|occasion/i;
 
 // `district` is the council's name as postcodes.io gives it, used to tell
-// "outside every zone" apart from "in another borough".
+// "outside every zone" apart from "in another borough"; it's left out where the
+// map may miss newer zones. A layer's `read` turns a feature's properties into
+// { zone | title, area?, hours, when? (the hours to go by, when they differ from
+// those shown), cost?, permitOnly?, unknown?, notes? }.
 export const ZONE_LAYERS = [
   {
     id: 'lbhf',
@@ -60,6 +69,99 @@ export const ZONE_LAYERS = [
         ? { zone: a.Zone_ID, area: a.Zone_Area, hours: a.Operation_Summary, permitOnly: /permit/i.test(a.Zone_Type ?? '') }
         : { title: 'Pay and display area', unknown: 'Pay and display bays: times are on the signs' },
     link: 'https://www.merton.gov.uk/streets-parking-transport/parking/cpz/cpz-list',
+  },
+  {
+    id: 'lambeth',
+    borough: 'Lambeth',
+    district: 'Lambeth',
+    bbox: [51.42, -0.155, 51.512, -0.087],
+    url: (bbox) => arcgisQuery(LAMBETH_CPZ, bbox, 'NAME,HOURS,CODE_1'),
+    // Names look like "Brixton Hill (D)". Hours like "8:30am - 6:30pm Monday - Friday & 10:00am - 12:00pm
+    // Monday - Friday" mean some streets have the shorter hours: go by the longer ones.
+    read: (a) => {
+      const hours = (a.HOURS ?? '').replace(/\s*\(check individual bays\)/i, '');
+      const [main, other] = hours.split(/\s+&\s+/);
+      return {
+        zone: a.CODE_1,
+        area: a.NAME?.replace(/\s*\([^)]*\)$/, ''),
+        hours,
+        when: main,
+        notes: [
+          other && `Some streets in this zone are controlled ${other} instead: check the signs.`,
+          /check individual bays/i.test(a.HOURS ?? '') && 'Some bays have their own hours: check the sign by the bay.',
+        ].filter(Boolean),
+      };
+    },
+    link: 'https://www.lambeth.gov.uk/parking/parking-restrictions/where-you-can-park/controlled-parking-zones-cpzs',
+  },
+  // Kensington & Chelsea is controlled everywhere. Its zones set the hours of
+  // single yellow lines and pay bays; residents' bays follow their own, longer, controls.
+  {
+    id: 'rbkc',
+    borough: 'Kensington & Chelsea',
+    bbox: [51.476, -0.23, 51.531, -0.149],
+    url: (bbox) => arcgisQuery(`${RBKC_INSPIRE}/4`, bbox, 'Name,Type,Zone'),
+    read: (a) =>
+      a.Zone === 'Restricted'
+        ? { title: a.Name?.replace(/^Restricted Zone - /, 'Restricted zone: '), unknown: 'No yellow lines: the times are on the zone entry signs' }
+        : { zone: a.Zone, hours: a.Type },
+    notes: [
+      'Hours for single yellow lines and pay bays across the zone. Outside them you can park on single yellows, and pay bays are free, unless a sign says otherwise. Never on double yellows.',
+      "Residents' bays have their own, longer hours.",
+    ],
+    link: RBKC_LINK,
+  },
+  {
+    id: 'rbkc-bays',
+    borough: 'Kensington & Chelsea',
+    label: "residents' bay hours",
+    bbox: [51.476, -0.23, 51.531, -0.149],
+    url: (bbox) => arcgisQuery(`${RBKC_INSPIRE}/13`, bbox, 'Control,Control_1,Control_2,Control_3,Area_Name'),
+    // Control_3 is sometimes only for event days or special occasions. Empty fields hold a space.
+    read: (a) => {
+      const times = [a.Control_1, a.Control_2, a.Control_3].map((t) => t?.trim()).filter(Boolean);
+      return {
+        zone: a.Control?.trim().replace(/\s+/g, '-'),
+        title: a.Area_Name?.trim() || "Residents' bays",
+        area: a.Control,
+        hours: times.filter((t) => !EVENT_RE.test(t)).join('; '),
+        permitOnly: true,
+        notes: times.filter((t) => EVENT_RE.test(t)).map((t) => `Also ${t}.`),
+      };
+    },
+    notes: ["Hours for residents' bays: permit holders only then, open to anyone outside them unless a sign says otherwise."],
+    link: RBKC_LINK,
+  },
+  {
+    id: 'hackney',
+    borough: 'Hackney',
+    district: 'Hackney',
+    bbox: [51.519, -0.106, 51.579, -0.016],
+    url: (bbox) => wfsQuery(HACKNEY_WFS, 'parking:controlled_parking_zone', bbox),
+    // Hours read like "Mon-Fri 8.30am-6.30pm<br>Sat 8.30am-1.30pm<br>Emirates Stadium events".
+    read: (p) => {
+      const lines = (p.controlled_hours ?? '').split(/<br\s*\/?>/i).map((l) => l.trim()).filter(Boolean);
+      return {
+        zone: p.zone?.replace(/^Zone\s+/i, ''),
+        hours: lines.filter((l) => !EVENT_RE.test(l)).join('; '),
+        notes: lines.filter((l) => EVENT_RE.test(l)).map((l) => `Extra controls on ${l.replace(/s$/, '')} days: check the signs.`),
+      };
+    },
+    link: 'https://www.hackney.gov.uk/parking-streets-and-transport/where-park/parking-zones',
+  },
+  // Newham's map lags behind its newer zones, so it can't say a street has none.
+  {
+    id: 'newham',
+    borough: 'Newham',
+    bbox: [51.497, -0.022, 51.558, 0.099],
+    url: (bbox) => arcgisQuery(NEWHAM_CPZ, bbox, 'NAME,PREFIX,TIMES,CPZ_Status'),
+    read: (a) => ({
+      zone: a.PREFIX,
+      area: a.NAME,
+      hours: a.TIMES,
+      notes: EVENT_RE.test(a.CPZ_Status ?? '') ? ['Extra controls on event days: check the signs.'] : [],
+    }),
+    link: 'https://www.newham.gov.uk/parking-rules',
   },
 ];
 
@@ -112,37 +214,51 @@ async function queryLayer(layer, bbox, fetchImpl) {
   return parseZones(json, layer);
 }
 
-/** GeoJSON features → zone options with polygons as rings of [lat, lon]. */
+/**
+ * GeoJSON features → zone options with polygons as rings of [lat, lon]. Pieces
+ * of one zone with the same hours become one option.
+ */
 export function parseZones(json, layer) {
-  return (json.features ?? [])
-    .map((f) => ({ a: f.properties ?? {}, rings: rings(f.geometry) }))
-    .filter(({ rings }) => rings.length)
-    .map(({ a, rings }) => {
-      const { zone, title, area, hours, cost, permitOnly, unknown } = layer.read(a);
-      const schedule = parseSchedule(hours);
-      return {
-        id: `zone-${layer.id}-${zone ?? title}`,
-        source: 'council-zones',
-        kind: 'zone',
-        layer: layer.id,
-        title: title ?? `Zone ${zone}`,
-        subtitle: [area, `${layer.borough} controlled parking zone`].filter(Boolean).join(' · '),
-        polygons: rings.map((ring) => ring.map(([lon, lat]) => [lat, lon])),
-        parts: [
-          {
-            label: '',
-            detail: [hours, cost].filter(Boolean).join(' · '),
-            rules: schedule ? [{ when: schedule, effect: permitOnly ? 'permit' : 'controlled' }] : [],
-            otherwise: schedule
-              ? { effect: 'free' }
-              : { effect: 'unknown', label: unknown ?? `Hours not recognised: ${hours}` },
-            notes: [],
-          },
-        ],
-        notes: [ZONE_NOTE, LAG_NOTE],
-        link: a.link || layer.link,
-      };
-    });
+  const options = new Map();
+  for (const f of json.features ?? []) {
+    const polygons = rings(f.geometry).map((ring) => ring.map(([lon, lat]) => [lat, lon]));
+    if (!polygons.length) continue;
+    const read = layer.read(f.properties ?? {});
+    const key = JSON.stringify([read.zone ?? read.title, read.area, read.hours, read.notes]);
+    if (options.has(key)) options.get(key).polygons.push(...polygons);
+    else options.set(key, zoneOption(layer, read, polygons, f.properties?.link));
+  }
+  // A zone with different hours in different places gets one option for each.
+  const ids = new Map();
+  return [...options.values()].map((o) => {
+    const n = (ids.get(o.id) ?? 0) + 1;
+    ids.set(o.id, n);
+    return n > 1 ? { ...o, id: `${o.id}-${n}` } : o;
+  });
+}
+
+function zoneOption(layer, { zone, title, area, hours, when, cost, permitOnly, unknown, notes = [] }, polygons, link) {
+  const schedule = parseSchedule(when ?? hours);
+  return {
+    id: `zone-${layer.id}-${zone ?? title}`,
+    source: 'council-zones',
+    kind: 'zone',
+    layer: layer.id,
+    title: title ?? `Zone ${zone}`,
+    subtitle: [area, `${layer.borough} ${layer.label ?? 'controlled parking zone'}`].filter(Boolean).join(' · '),
+    polygons,
+    parts: [
+      {
+        label: '',
+        detail: [hours, cost].filter(Boolean).join(' · '),
+        rules: schedule ? [{ when: schedule, effect: permitOnly ? 'permit' : 'controlled' }] : [],
+        otherwise: schedule ? { effect: 'free' } : { effect: 'unknown', label: unknown ?? `Hours not recognised: ${hours}` },
+        notes: [],
+      },
+    ],
+    notes: [...notes, ...(layer.notes ?? [ZONE_NOTE]), LAG_NOTE],
+    link: link || layer.link,
+  };
 }
 
 /**

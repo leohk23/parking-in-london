@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseZones, fetchCouncilZones, ZONE_LAYERS } from '../src/sources/council-zones.js';
+import { parseZones, fetchCouncilZones, outsideZones, ZONE_LAYERS } from '../src/sources/council-zones.js';
 import { evaluateOption } from '../src/evaluate.js';
 import { londonClock } from '../src/schedule.js';
 import { distanceToOption, inPolygon, bboxAround } from '../src/geo.js';
@@ -107,4 +107,85 @@ test('Merton zones: Sunday hours, permit-only zones and the pay and display area
   assert.equal(sw1.parts[0].rules[0].effect, 'permit');
   assert.equal(pd.title, 'Pay and display area');
   assert.equal(pd.parts[0].otherwise.effect, 'unknown');
+});
+
+const layer = (id) => ZONE_LAYERS.find((l) => l.id === id);
+const feature = (properties, lat = 51.5, lon = -0.1) => ({ properties, geometry: { type: 'Polygon', coordinates: square(lat, lon, 0.001) } });
+const monday = londonClock(new Date('2026-10-19T13:00:00Z')); // Mon 14:00 BST
+
+test('Lambeth zones with two sets of hours go by the longer ones', () => {
+  const [l, c] = parseZones(
+    {
+      features: [
+        feature({ NAME: 'Clapham (L)', HOURS: '8:30am - 6:30pm Monday - Friday & 10:00am - 12:00pm Monday - Friday', CODE_1: 'L' }),
+        feature({ NAME: 'Clapham (C)', HOURS: '8:30am - 6:30pm Monday - Friday (Check individual bays)', CODE_1: 'C' }),
+      ],
+    },
+    layer('lambeth'),
+  );
+  assert.equal(l.subtitle, 'Clapham · Lambeth controlled parking zone');
+  assert.equal(evaluateOption(l, monday, 60).results[0].summary, 'Pay or permit until 18:30, then free');
+  assert.match(l.notes[0], /controlled 10:00am - 12:00pm Monday - Friday instead/);
+  assert.equal(c.parts[0].detail, '8:30am - 6:30pm Monday - Friday');
+  assert.match(c.notes[0], /their own hours/);
+});
+
+test('Kensington & Chelsea: zone hours, restricted zones and residents’ bays', () => {
+  const [zone, restricted] = parseZones(
+    {
+      features: [
+        feature({ Name: 'Zone 1', Type: 'Monday to Friday, 8:30am - 6:30pm, Saturday, 8:30am - 1.30pm', Zone: '1' }),
+        feature({ Name: 'Restricted Zone - Exhibition Road', Type: 'Restricted Zone', Zone: 'Restricted' }),
+      ],
+    },
+    layer('rbkc'),
+  );
+  assert.equal(zone.title, 'Zone 1');
+  assert.match(zone.notes[0], /single yellow lines and pay bays/);
+  assert.equal(restricted.title, 'Restricted zone: Exhibition Road');
+  assert.equal(restricted.parts[0].otherwise.effect, 'unknown');
+
+  const [bays, earls] = parseZones(
+    {
+      features: [
+        feature({ Control: 'Control 2', Control_1: '8:30am - 10:00pm Monday to Friday', Control_2: '8:30am - 6:30pm Saturday', Control_3: ' ', Area_Name: ' ' }),
+        feature({ Control: 'Control 8', Control_1: '8:30am - 10:00pm Monday to Friday', Control_2: '8:30am - 6:30pm Saturday', Control_3: '8.30am - 5pm Saturday to Sunday (on event days)', Area_Name: 'Earls Court Exhibition Centre' }),
+      ],
+    },
+    layer('rbkc-bays'),
+  );
+  assert.equal(bays.id, 'zone-rbkc-bays-Control-2');
+  assert.equal(bays.title, "Residents' bays");
+  assert.equal(bays.subtitle, "Control 2 · Kensington & Chelsea residents' bay hours");
+  assert.equal(bays.parts[0].detail, '8:30am - 10:00pm Monday to Friday; 8:30am - 6:30pm Saturday');
+  assert.equal(evaluateOption(bays, monday, 60).results[0].summary, 'Permit holders only until 22:00, then free');
+  assert.equal(earls.notes[0], 'Also 8.30am - 5pm Saturday to Sunday (on event days).');
+});
+
+test('Hackney: hours split over lines, event days noted, pieces of a zone merged', () => {
+  const options = parseZones(
+    {
+      features: [
+        feature({ zone: 'Zone M', controlled_hours: 'Mon-Fri 8.30am-6.30pm<br>Sat 8.30am-1.30pm<br>Emirates Stadium events' }),
+        feature({ zone: 'Zone M', controlled_hours: 'Mon-Fri 8.30am-6.30pm<br>Sat 8.30am-1.30pm<br>Emirates Stadium events' }, 51.51),
+        feature({ zone: 'Zone M', controlled_hours: 'Mon-Fri 8.30am-6.30pm<br>Sat 8.30am-1.30pm' }, 51.52),
+      ],
+    },
+    layer('hackney'),
+  );
+  assert.equal(options.length, 2);
+  const [m, m2] = options;
+  assert.equal(m.title, 'Zone M');
+  assert.equal(m.polygons.length, 2);
+  assert.equal(m.parts[0].detail, 'Mon-Fri 8.30am-6.30pm; Sat 8.30am-1.30pm');
+  assert.equal(m.notes[0], 'Extra controls on Emirates Stadium event days: check the signs.');
+  assert.equal(m2.id, 'zone-hackney-M-2');
+});
+
+test("Newham's map can't say a street has no zone", () => {
+  const [s] = parseZones({ features: [feature({ NAME: 'Stratford Central', PREFIX: 'S', TIMES: '8am - 6:30pm (Mon-Sat)', CPZ_Status: 'Event Day Parking Zone' })] }, layer('newham'));
+  assert.equal(s.subtitle, 'Stratford Central · Newham controlled parking zone');
+  assert.match(s.notes[0], /event days/);
+  assert.equal(outsideZones({ options: [s], layers: [layer('newham')] }, 'Newham', [51.6, 0]).length, 0);
+  assert.equal(outsideZones({ options: [], layers: [layer('hackney')] }, 'Hackney', [51.6, 0]).length, 1);
 });
