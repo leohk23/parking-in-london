@@ -145,9 +145,16 @@ body {
   background: #1d4ed8;
 }
 
+/* The same tiles as Where to live in London's menu: a guardsman on light blue. */
 .apps-icon.home {
-  background: #0f6b4f;
+  background: #dbeafe;
   font-size: 16px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .apps-icon.home {
+    background: rgb(59 130 246 / 0.2);
+  }
 }
 
 .logo {

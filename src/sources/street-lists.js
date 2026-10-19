@@ -3,7 +3,7 @@
 // The councils' sites don't allow browser requests, so the deploy workflow
 // copies them into data/ (scripts/update-wandsworth.mjs, update-kingston.mjs).
 //
-// A list file is { source, updated, boundary: rings of [lat, lon], streets },
+// A list file is { source, updated, localities?, boundary: rings of [lat, lon], streets },
 // where streets maps a name ("Albert Road", or "Albert Road, New Malden" where
 // the council names the locality) to its zone rules:
 //   { zone, area, hours, permitOnly?, cost?, maxStay?, numbers? | section? | blocks?, unknown?, notes? }
@@ -48,6 +48,17 @@ export const STREET_LISTS = [
       Tolworth: [51.3795, -0.2817],
       Chessington: [51.3605, -0.3005],
     },
+  },
+  {
+    id: 'ealing',
+    borough: 'Ealing',
+    district: 'Ealing',
+    complete: true,
+    bbox: [51.487, -0.42, 51.56, -0.24],
+    url: new URL(`../../data/ealing.json${version}`, import.meta.url).href,
+    link: 'https://www.ealing.gov.uk/info/201333/controlled_parking_zone_cpz',
+    // Same-named roads are told apart by postcode district or town ("Church Road, W7"),
+    // whose centres are in the file's `localities`.
   },
 ];
 
@@ -99,7 +110,7 @@ export function streetListOptions(lists, { streets = [], dest } = {}) {
     const destKey = dest?.street && normaliseName(dest.street);
     for (const [key, entries] of streetIndex(list, data)) {
       // Each way takes the entry for its locality ("Albert Road, New Malden"), or the plain one.
-      const entryAt = (p) => entries.get(nearestLocality(list, p)) ?? entries.get('');
+      const entryAt = (p) => entries.get(nearestLocality(list, data, p)) ?? entries.get('');
       const groups = new Map();
       for (const way of ways.get(key) ?? []) {
         const entry = way.line.some(inBorough) && entryAt(way.line[0]);
@@ -144,10 +155,13 @@ function boroughTest(list, data) {
   return (p) => (data.boundary?.length ? inPolygon(p, data.boundary) : inBbox(p, list.bbox));
 }
 
-function nearestLocality(list, p) {
+/** A list's localities: in the code (Kingston's), or in its file (Ealing's postcode districts). */
+const localitiesOf = (list, data) => list.localities ?? data.localities ?? {};
+
+function nearestLocality(list, data, p) {
   let best = '';
   let bestDistance = Infinity;
-  for (const [name, centre] of Object.entries(list.localities ?? {})) {
+  for (const [name, centre] of Object.entries(localitiesOf(list, data))) {
     const d = distance(p, centre);
     if (d < bestDistance) [best, bestDistance] = [name, d];
   }
@@ -164,7 +178,7 @@ function streetIndex(list, data) {
     let name = listed;
     let locality = '';
     const comma = listed.lastIndexOf(', ');
-    if (comma > 0 && list.localities?.[listed.slice(comma + 2)]) [name, locality] = [listed.slice(0, comma), listed.slice(comma + 2)];
+    if (comma > 0 && localitiesOf(list, data)[listed.slice(comma + 2)]) [name, locality] = [listed.slice(0, comma), listed.slice(comma + 2)];
     // "Trinity Road (part)" and "Trinity Road" are the same road on the map.
     name = name.replace(/\s*\(.*?\)/g, '');
     const key = normaliseName(name);

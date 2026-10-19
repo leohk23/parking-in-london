@@ -35,13 +35,20 @@ export async function geocode(query, { fetchImpl = fetch } = {}) {
   if (!res.ok) throw new Error(`Place search failed (${res.status})`);
   const hit = (await res.json()).find(inGreaterLondon);
   if (!hit) throw new Error(`Couldn't find "${q}" in Greater London`);
-  const isRoad = (hit.category ?? hit.class) === 'highway';
+  // Bus stops and crossings are "highway" too: only roads count, and anything else
+  // is on the road in its address.
+  const isRoad = (hit.category ?? hit.class) === 'highway' && ROAD_TYPES.has(hit.type);
   return {
     label: hit.display_name.split(', ').slice(0, 3).join(', '),
     point: [Number(hit.lat), Number(hit.lon)],
-    street: isRoad ? hit.name : null,
+    street: isRoad ? hit.name : hit.address?.road ?? null,
   };
 }
+
+const ROAD_TYPES = new Set([
+  'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'service', 'living_street',
+  'pedestrian', 'road', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link',
+]);
 
 function inGreaterLondon(hit) {
   return hit.address?.['ISO3166-2-lvl6'] === 'GB-LND' || /\bGreater London\b/.test(hit.display_name ?? '');

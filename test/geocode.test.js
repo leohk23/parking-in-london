@@ -57,7 +57,7 @@ test('postcodes go to postcodes.io, places to Nominatim', async () => {
   const { fetchImpl } = fakeFetch({
     'https://api.postcodes.io/postcodes/': { body: { result: { postcode: 'SW19 6NL', region: 'London', latitude: 51.44, longitude: -0.2 } } },
     'https://nominatim.openstreetmap.org/search': {
-      body: [{ lat: '51.444', lon: '-0.204', category: 'highway', name: 'Wimbledon Park Road', display_name: 'Wimbledon Park Road, Southfields, London Borough of Wandsworth, London, Greater London, England, United Kingdom' }],
+      body: [{ lat: '51.444', lon: '-0.204', category: 'highway', type: 'residential', name: 'Wimbledon Park Road', display_name: 'Wimbledon Park Road, Southfields, London Borough of Wandsworth, London, Greater London, England, United Kingdom' }],
     },
   });
   assert.deepEqual(await geocode('sw19 6nl', { fetchImpl }), { label: 'SW19 6NL', point: [51.44, -0.2], street: null });
@@ -75,4 +75,20 @@ test('places and postcodes outside Greater London are refused', async () => {
       : reply([{ lat: '51.33', lon: '-0.27', display_name: 'Epsom High Street, Epsom, Surrey, England, United Kingdom', address: { 'ISO3166-2-lvl6': 'GB-SRY' } }]);
   await assert.rejects(geocode('KT17 1AA', { fetchImpl }), /outside Greater London/);
   await assert.rejects(geocode('Epsom High Street', { fetchImpl }), /in Greater London/);
+});
+
+test("a bus stop named after a station isn't taken for a street", async () => {
+  const { geocode } = await import('../src/geocode.js');
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => [
+      {
+        lat: '51.5148', lon: '-0.3016', category: 'highway', type: 'bus_stop', name: 'Ealing Broadway Station',
+        display_name: 'Ealing Broadway Station, The Broadway, Ealing, London Borough of Ealing, London, Greater London, England, United Kingdom',
+        address: { road: 'The Broadway', 'ISO3166-2-lvl6': 'GB-LND' },
+      },
+    ],
+  });
+  assert.equal((await geocode('Ealing Broadway station', { fetchImpl })).street, 'The Broadway');
 });
