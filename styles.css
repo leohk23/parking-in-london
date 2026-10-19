@@ -96,7 +96,8 @@ body {
   bottom: calc(100% + 10px);
   left: -4px;
   z-index: 1100;
-  min-width: 230px;
+  width: max-content;
+  max-width: calc(100vw - 24px);
   padding: 6px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -115,7 +116,9 @@ body {
   border-radius: 8px;
   color: var(--text);
   text-decoration: none;
-  font-size: 15px;
+  font-size: 14px;
+  /* Each app name on one line. */
+  white-space: nowrap;
 }
 
 .apps-menu a:hover,
