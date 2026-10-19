@@ -110,3 +110,15 @@ test('Harrow and Enfield zones, copied from the councils', () => {
   assert.equal(spurs.subtitle, 'Spurs Event Day · Enfield controlled parking zone');
   assert.equal(spurs.parts[0].otherwise.label, 'Controlled on Spurs event days: check the signs');
 });
+
+test("Westminster bays get their sub-zone's hours from the transcribed PDF", async () => {
+  const { westminsterRule } = await import('../scripts/build-kerb-tiles.mjs');
+  const rule = (...args) => summary(...westminsterRule(...args).reverse());
+  assert.equal(rule('RESIDENT BAY', 'A2', 'ECCLESTON SQUARE'), 'Permit holders only until 22:00, then free');
+  assert.equal(rule('RESIDENT BAY', 'F1', 'GLOUCESTER PLACE'), 'Permit holders only');
+  assert.equal(rule('RESIDENT BAY', 'D4', 'MAUNSEL STREET'), 'Permit holders only until 22:30, then free');
+  assert.equal(rule('PBP BAY', 'E1', 'MOUNT STREET'), 'Pay to park until 18:30, then free');
+  assert.equal(rule('SHARED USE BAY', 'B6', 'PORCHESTER TERRACE'), 'Pay to park until 18:30, then free');
+  assert.equal(rule('MOTORCYCLE BAY', 'G1', 'DEAN STREET'), 'Motorcycles only');
+  assert.equal(rule('HOSPITAL BAY', 'F2', 'PRAED STREET'), 'Hospital only');
+});
