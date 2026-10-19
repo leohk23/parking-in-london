@@ -30,6 +30,7 @@ export const KERB_LAYERS = [
   tiled('redbridge', 'Redbridge', [51.542, 0.01, 51.627, 0.151], 'https://redbridge.traffweb.app/'),
   tiled('barking-dagenham', 'Barking & Dagenham', [51.517, 0.064, 51.599, 0.186], 'https://barking-dagenham.traffweb.app/'),
   tiled('waltham-forest', 'Waltham Forest', [51.549, -0.057, 51.649, 0.026], 'https://walthamforest.traffweb.app/'),
+  tiled('westminster', 'Westminster', [51.481, -0.218, 51.541, -0.108], 'https://www.westminster.gov.uk/parking/parking-zones-and-prices'),
 ];
 
 export async function fetchKerbside(bbox, { fetchImpl = fetch, layers = KERB_LAYERS, tilesBase = TILES } = {}) {
@@ -156,6 +157,8 @@ export function kerbPart(text, type = '') {
     const max = /(\d+(?:\.\d+)?\s*(?:hours?|hrs?|mins?|minutes?))\b/i.exec(text.replace(/no\s+return(\s+within)?\s*\d+(\.\d+)?\s*\w+/gi, ''));
     rule = { effect: 'free', label: max ? `Free for up to ${max[1]}` : 'Free, limited stay (see sign)' };
   } else if (/free/.test(t)) rule = { effect: 'free' };
+  // Bays kept for someone else: "Hospital only", "Supreme Court permit bay".
+  else if (/\bonly\b/.test(t)) rule = { effect: 'restricted', label: tidy(text) };
   else return { label: '', rules: [], otherwise: { effect: 'unknown', label: tidy(text) }, notes: [] };
 
   // "At any time", or no times at all (bus stops, box junctions), means always.
