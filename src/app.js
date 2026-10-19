@@ -6,6 +6,7 @@ import { attachSuggestions } from './autocomplete.js';
 import { loadRecent, addRecent, clearRecent } from './recent.js';
 import { createCache } from './cache.js';
 import { fetchOsm } from './sources/osm.js';
+import { loadOsmTiles } from './sources/osm-tiles.js';
 import { fetchCamden } from './sources/camden.js';
 import { fetchCouncilZones, outsideZones } from './sources/council-zones.js';
 import { fetchKerbside } from './sources/kerbside.js';
@@ -165,6 +166,11 @@ document.addEventListener('click', (e) => !e.target.closest('.apps') && $('.apps
 $('#info').addEventListener('click', (e) => e.target === $('#info') && $('#info').close());
 
 restoreFromUrl();
+
+// The offline cache (sw.js) is for the published site; local servers skip it so edits show at once.
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
 
 async function locate() {
   if (!navigator.geolocation) return showProgress('Location isn\'t available in this browser. Type a place instead.', 'error');
@@ -352,10 +358,12 @@ async function search({ query, dest }) {
   const arrival = isNow ? new Date() : new Date($('#arrive').value);
   setBusy(true);
   try {
+    const lookupStarted = performance.now();
     if (!dest) {
       showProgress('Finding the place…');
       dest = await geocode(query);
     }
+    const lookupMs = performance.now() - lookupStarted;
     if (!isLatest()) return;
     saveToUrl(query ?? $('#q').value);
     if (dest.label !== 'Your location' && dest.label !== 'Dropped pin') addRecent(dest);
@@ -373,38 +381,46 @@ async function search({ query, dest }) {
 
     // Each source is shown as soon as it arrives: council zones take under a
     // second, OpenStreetMap can take much longer when its servers are busy.
-    const osm = fetchOsm(area, { street: dest.street, center: dest.point, streets: streetListsCover(area), cache: osmCache });
+    // Each source's load gives { options, skipped? (nothing for this area), via? (how OpenStreetMap was loaded) }.
+    const started = performance.now();
+    const osm = fetchOsm(area, { street: dest.street, center: dest.point, streets: streetListsCover(area), tiles: loadOsmTiles, cache: osmCache });
     const council = councilAt(dest.point).catch(() => null);
     const sources = [
-      { name: 'OpenStreetMap', load: osm.then((r) => r.options) },
+      { name: 'OpenStreetMap', key: 'osm', load: osm.then((r) => ({ options: r.options, via: r.via })) },
       // Drawn along OpenStreetMap's streets; your own street is listed even without them.
       {
         name: "the council's street list",
-        load: Promise.all([loadStreetLists(area), osm.then((r) => r.streets, () => []), council]).then(([lists, streets, district]) => [
-          ...streetListOptions(lists, { streets, dest }),
-          ...outsideStreetLists(lists, { dest, council: district }),
-        ]),
+        key: 'street-list',
+        load: Promise.all([loadStreetLists(area), osm.then((r) => r.streets, () => []), council]).then(([lists, streets, district]) => ({
+          options: [...streetListOptions(lists, { streets, dest }), ...outsideStreetLists(lists, { dest, council: district })],
+          skipped: !lists.length,
+        })),
       },
       {
         name: "the council's zone map",
-        load: Promise.all([fetchCouncilZones(area), council]).then(([r, district]) => [
-          ...r.options,
-          ...outsideZones(r, district, dest.point),
-        ]),
+        key: 'council-zones',
+        load: Promise.all([fetchCouncilZones(area), council]).then(([r, district]) => ({
+          options: [...r.options, ...outsideZones(r, district, dest.point)],
+          skipped: r.skipped,
+        })),
       },
-      { name: "the council's kerbside map", load: fetchKerbside(area).then((r) => r.options) },
-      { name: 'Camden bay data', load: fetchCamden(area).then((r) => r.options) },
+      { name: "the council's kerbside map", key: 'kerbside', load: fetchKerbside(area) },
+      { name: 'Camden bay data', key: 'camden', load: fetchCamden(area) },
     ];
     const waiting = new Set(sources.map((src) => src.name));
-    current = { dest, radius, options: [], clock, sourceNotes: [], loading: true };
+    current = { dest, radius, options: [], clock, sourceNotes: [], loading: true, timings: [], lookupMs };
     showProgress('Loading parking data…');
     render();
 
     await Promise.all(
-      sources.map(({ name, load }) =>
+      sources.map(({ name, key, load }) =>
         load
           .then(
-            (raw) => isLatest() && current.options.push(...raw.map(prepare).filter((o) => o.here || o.distance <= radius)),
+            (r) => {
+              if (!isLatest()) return;
+              current.options.push(...r.options.map(prepare).filter((o) => o.here || o.distance <= radius));
+              if (!r.skipped) current.timings.push({ name, key, ms: performance.now() - started, via: r.via });
+            },
             (err) => isLatest() && current.sourceNotes.push(`Couldn't load ${name} (${err.message}).`),
           )
           .finally(() => {
@@ -449,6 +465,7 @@ function render() {
   // Where and when are already in the boxes above, so the summary is just the counts.
   showStatus(
     `${counts.free ?? 0} free · ${counts.paid ?? 0} paid · ${counts.no ?? 0} not allowed · ${counts.unknown ?? 0} to check` +
+      (current.loading ? '' : timingHtml(current)) +
       warnings.map((w) => `<span class="warn">${esc(w)}</span>`).join(''),
   );
   $('.controls').hidden = false;
@@ -600,6 +617,11 @@ function bindInfo(root) {
   }
 }
 
+function timingFor(key) {
+  const t = current?.timings.find((x) => x.key === key);
+  return t ? `<br />Loaded in ${seconds(t.ms)}${t.via ? ` from the ${VIA_LABELS[t.via]}` : ''}` : '';
+}
+
 function showInfo(id) {
   const o = current?.options.find((x) => x.id === id);
   if (!o) return;
@@ -608,10 +630,24 @@ function showInfo(id) {
     <h2 id="info-title">${esc(o.title)}</h2>
     ${o.subtitle ? `<p class="info-sub">${esc(o.subtitle)}</p>` : ''}
     ${notes.length ? `<ul class="info-notes">${notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
-    <p class="info-src">Source: ${SOURCE_LABELS[o.source]}${o.checked ? `, updated ${esc(o.checked)}` : ''}${
+    <p class="info-src">Source: ${SOURCE_LABELS[o.source]}${o.checked ? `, updated ${esc(o.checked)}` : ''}${timingFor(o.source)}${
       o.link ? `<br /><a href="${esc(o.link)}" target="_blank" rel="noopener">Open the source page</a>` : ''
     }</p>`;
   if (!$('#info').open) $('#info').showModal();
+}
+
+const VIA_LABELS = { prebuilt: 'prebuilt copy', saved: 'saved on this phone', live: 'live servers' };
+const seconds = (ms) => `${(ms / 1000).toFixed(1)} s`;
+
+/** "Loaded in 1.2 s: OpenStreetMap 0.3 s (prebuilt copy) · zone map 0.8 s", so slow sources are easy to spot. */
+function timingHtml({ timings, lookupMs }) {
+  if (!timings.length) return '';
+  const total = Math.max(...timings.map((t) => t.ms)) + lookupMs;
+  const parts = [
+    ...(lookupMs > 50 ? [`place lookup ${seconds(lookupMs)}`] : []),
+    ...[...timings].sort((a, b) => b.ms - a.ms).map((t) => `${t.name.replace(/^the council's /, '')} ${seconds(t.ms)}${t.via ? ` (${VIA_LABELS[t.via]})` : ''}`),
+  ];
+  return `<span class="timing">Loaded in ${seconds(total)}: ${esc(parts.join(' · '))}</span>`;
 }
 
 function showStatus(html) {

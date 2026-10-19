@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  # Weekly, to pick up changes to the councils' street lists.
+  # Weekly, to pick up changes to the councils' street lists and OpenStreetMap.
   schedule:
     - cron: '23 4 * * 1'
 
@@ -48,11 +48,22 @@ jobs:
         run: |
           node scripts/update-wandsworth.mjs || echo "::warning::Kept the committed Wandsworth list"
           node scripts/update-kingston.mjs || echo "::warning::Kept the committed Kingston list"
+      # OpenStreetMap's car parks, street parking and street shapes for London,
+      # cut into small tiles so searches don't wait on the busy Overpass servers.
+      # If this fails the site is published without them and the app uses Overpass.
+      - name: Build OpenStreetMap tiles
+        continue-on-error: true
+        run: |
+          sudo apt-get install -y -qq osmium-tool >/dev/null
+          curl -sSfL -o "$RUNNER_TEMP/london.osm.pbf" https://download.geofabrik.de/europe/united-kingdom/england/greater-london-latest.osm.pbf
+          osmium tags-filter "$RUNNER_TEMP/london.osm.pbf" nwr/amenity=parking w/highway -o "$RUNNER_TEMP/filtered.osm.pbf" --overwrite
+          osmium export "$RUNNER_TEMP/filtered.osm.pbf" -f geojsonseq --add-unique-id=type_id -o "$RUNNER_TEMP/london.geojsonseq" --overwrite
+          node scripts/build-osm-tiles.mjs "$RUNNER_TEMP/london.geojsonseq" data/osm
       - uses: actions/configure-pages@v5
       - name: Collect the site files
         run: |
           mkdir _site
-          cp -r index.html styles.css manifest.webmanifest icons src data vendor _site/
+          cp -r index.html sw.js styles.css manifest.webmanifest icons src data vendor _site/
           # Versioned URLs, so a phone never runs a mix of old and new files after a deploy.
           v="${GITHUB_SHA::8}"
           sed -i -E "s#(href|src)=\"(styles\.css|src/app\.js)\"#\1=\"\2?v=$v\"#" _site/index.html
