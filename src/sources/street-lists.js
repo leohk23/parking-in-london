@@ -60,6 +60,17 @@ export const STREET_LISTS = [
     // Same-named roads are told apart by postcode district or town ("Church Road, W7"),
     // whose centres are in the file's `localities`.
   },
+  {
+    id: 'richmond',
+    borough: 'Richmond',
+    district: 'Richmond upon Thames',
+    complete: true,
+    bbox: [51.4, -0.42, 51.49, -0.24],
+    url: new URL(`../../data/richmond.json${version}`, import.meta.url).href,
+    link: 'https://www.richmond.gov.uk/services/parking/cpz/cpz_times',
+    // Built from the council's address lookup, monthly (scripts/update-richmond.mjs);
+    // same-named roads are told apart by town ("York Road, Teddington").
+  },
 ];
 
 /** "St. Andrew's Road" and "St Andrews Road" both become "st andrews road". */
