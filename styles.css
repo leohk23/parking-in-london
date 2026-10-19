@@ -110,6 +110,55 @@ select {
   min-width: 0;
 }
 
+/* Suggestions span the whole search row and sit above the map. */
+.search-row {
+  position: relative;
+}
+
+.suggestions {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 1100;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.suggestion {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.suggestion svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--muted);
+}
+
+.suggestion.active,
+.suggestion:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.suggestion-note {
+  padding: 9px 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .when {
   display: flex;
   gap: 6px;

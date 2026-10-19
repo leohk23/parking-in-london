@@ -9,6 +9,7 @@
 // how many roads carry street-parking tags), and the same results list the app shows.
 
 import { geocode, reverseGeocode } from '../src/geocode.js';
+import { fetchSuggestions } from '../src/suggest.js';
 import { overpassQuery, parseOsm } from '../src/sources/osm.js';
 import { fetchCamden } from '../src/sources/camden.js';
 import { fetchCouncilZones } from '../src/sources/council-zones.js';
@@ -43,6 +44,9 @@ if (coords) {
   dest = { label: place.label, point, street: place.street };
   console.log(`Reverse geocode: ${place.label}${place.street ? ` (street: ${place.street})` : ''}`);
 } else {
+  const suggestions = await fetchSuggestions(query, { fetchImpl }).catch((err) => [{ label: `(failed: ${err.message})`, point: [] }]);
+  console.log(`Type-ahead suggestions for "${query}":`);
+  for (const sug of suggestions) console.log(`  - ${sug.label}  ${sug.point.join(',')}${sug.street ? `  street=${sug.street}` : ''}`);
   const params = new URLSearchParams({ format: 'jsonv2', limit: '5', countrycodes: 'gb', viewbox: '-0.52,51.70,0.34,51.28', bounded: '1', q: query });
   const res = await fetchImpl(`https://nominatim.openstreetmap.org/search?${params}`);
   const hits = res.ok ? await res.json() : [];
