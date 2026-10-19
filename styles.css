@@ -729,6 +729,20 @@ button.info:focus-visible {
   visibility: hidden;
 }
 
+.leaflet-marker-icon.drop-pin {
+  background: none;
+  border: 0;
+}
+
+.pin-popup {
+  display: grid;
+  gap: 8px;
+}
+
+.pin-address {
+  font-weight: 600;
+}
+
 .leaflet-marker-icon.you {
   background: none;
   border: 0;

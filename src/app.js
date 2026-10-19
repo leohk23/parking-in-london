@@ -36,6 +36,7 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 const resultsLayer = L.layerGroup().addTo(map);
 const youLayer = L.layerGroup().addTo(map);
+const pinLayer = L.layerGroup().addTo(map);
 const layersById = new Map();
 // Leaflet stops clicks inside popups from reaching the page, so each popup's info button is bound when it opens.
 map.on('popupopen', (e) => bindInfo(e.popup.getElement()));
@@ -183,10 +184,43 @@ async function locate() {
   }
 
   showProgress('Finding the address…');
-  const place = await reverseGeocode(point, { signal: AbortSignal.timeout?.(6000) }).catch(() => null);
+  await searchFrom(point, 'Your location');
+}
+
+/** Searches from a point, with its nearest address (if any) shown in the search box. */
+async function searchFrom(point, fallbackLabel, place) {
+  place ??= await reverseGeocode(point, { signal: AbortSignal.timeout?.(6000) }).catch(() => null);
   $('#q').value = place?.label ?? '';
   pickedPlace = place ? { label: place.label, point, street: place.street } : null;
-  await search({ dest: { label: place?.label ?? 'Your location', point, street: place?.street ?? null } });
+  await search({ dest: { label: place?.label ?? fallbackLabel, point, street: place?.street ?? null } });
+}
+
+// Long-press the map (right-click on a computer) to drop a pin and search from
+// there, for places the suggestions don't know.
+const PIN_ICON = L.divIcon({
+  className: 'drop-pin',
+  html: '<svg viewBox="0 0 30 42" width="30" height="42" aria-hidden="true"><path d="M15 1C7.3 1 1 7.2 1 14.9 1 25.4 15 41 15 41s14-15.6 14-26.1C29 7.2 22.7 1 15 1z" fill="#c23a2b" stroke="#fff" stroke-width="2"/><circle cx="15" cy="15" r="5" fill="#fff"/></svg>',
+  iconSize: [30, 42],
+  iconAnchor: [15, 41],
+  popupAnchor: [0, -38],
+});
+map.on('contextmenu', (e) => dropPin([e.latlng.lat, e.latlng.lng]));
+
+function dropPin(point) {
+  pinLayer.clearLayers();
+  const body = L.DomUtil.create('div', 'pin-popup');
+  body.innerHTML = '<div class="pin-address">Finding the address…</div><button type="button">Find parking here</button>';
+  let place;
+  const lookup = reverseGeocode(point, { signal: AbortSignal.timeout?.(6000) })
+    .then((p) => (place = p))
+    .catch(() => null)
+    .then(() => (body.querySelector('.pin-address').textContent = place?.label ?? 'Dropped pin'));
+  body.querySelector('button').addEventListener('click', async () => {
+    await lookup;
+    pinLayer.clearLayers();
+    searchFrom(point, 'Dropped pin', place);
+  });
+  L.marker(point, { icon: PIN_ICON, keyboard: false }).addTo(pinLayer).bindPopup(body, { closeButton: true, minWidth: 190 }).openPopup();
 }
 
 // Following: the blue dot moves as you do and the map stays centred on it,
@@ -324,7 +358,8 @@ async function search({ query, dest }) {
     }
     if (!isLatest()) return;
     saveToUrl(query ?? $('#q').value);
-    if (dest.label !== 'Your location') addRecent(dest);
+    if (dest.label !== 'Your location' && dest.label !== 'Dropped pin') addRecent(dest);
+    pinLayer.clearLayers();
 
     const area = bboxAround(dest.point, radius);
     const clock = londonClock(arrival);
@@ -446,7 +481,14 @@ function drawMap(dest, options) {
   const colors = COLORS();
   resultsLayer.clearLayers();
   layersById.clear();
-  L.marker(dest.point, { title: dest.label }).addTo(resultsLayer);
+  // Drag the destination to fine-tune it: the search runs again from where it's dropped.
+  L.marker(dest.point, { title: `${dest.label} (drag to move)`, draggable: true, autoPan: true })
+    .on('dragend', (e) => {
+      const { lat, lng } = e.target.getLatLng();
+      showProgress('Finding the address…');
+      searchFrom([lat, lng], 'Dropped pin');
+    })
+    .addTo(resultsLayer);
   L.circle(dest.point, { radius: Number($('#radius').value), color: colors.unknown, weight: 1, fill: false, dashArray: '4 6' }).addTo(resultsLayer);
 
   // Zones go underneath; then worst first so free options end up on top.
