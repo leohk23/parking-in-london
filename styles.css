@@ -684,10 +684,14 @@ button.info:focus-visible {
   color: var(--muted);
 }
 
+/* Slightly see-through, so the streets under a popup stay visible. */
 .leaflet-popup-content-wrapper,
 .leaflet-popup-tip {
   background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
   color: var(--text);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
 }
 
 .leaflet-popup-content {
