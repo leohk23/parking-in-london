@@ -14,6 +14,9 @@ const LAMBETH_CPZ = 'https://gis.lambeth.gov.uk/arcgis/rest/services/LambethCont
 const RBKC_INSPIRE = 'https://www.rbkc.gov.uk/arcgis/rest/services/RBKC/INSPIRE/MapServer';
 const HACKNEY_WFS = 'https://map2.hackney.gov.uk/geoserver/ows';
 const NEWHAM_CPZ = 'https://services1.arcgis.com/trOdpHvvP7HrTfdb/arcgis/rest/services/Controlled_Parking_Zones/FeatureServer/0';
+// Zone maps browsers can't read, copied here each week by scripts/build-kerb-tiles.mjs.
+// Data files get the same version as this module after a deploy.
+const copied = (id) => new URL(`../../data/zones/${id}.json${new URL(import.meta.url).search}`, import.meta.url).href;
 const RBKC_LINK = 'https://www.rbkc.gov.uk/media/document/controlled-parking-hours-map-september-2024';
 const EVENT_RE = /event|occasion/i;
 
@@ -163,7 +166,40 @@ export const ZONE_LAYERS = [
     }),
     link: 'https://www.newham.gov.uk/parking-rules',
   },
+  {
+    id: 'harrow',
+    borough: 'Harrow',
+    district: 'Harrow',
+    bbox: [51.553, -0.407, 51.633, -0.264],
+    url: () => copied('harrow'),
+    read: (p) => ({ zone: p.zone, area: p.area, hours: p.hours, permitOnly: /permits? only/i.test(p.hours ?? '') }),
+    link: 'https://www.harrow.gov.uk/parking',
+  },
+  {
+    id: 'enfield',
+    borough: 'Enfield',
+    district: 'Enfield',
+    bbox: [51.606, -0.182, 51.685, -0.01],
+    url: () => copied('enfield'),
+    // Names like "GRANGE PARK CPZ"; a few zones have a code, and some no hours on the map.
+    read: (p) => {
+      const name = shout(p.area ?? '').replace(/\s*\bC\.?P\.?Z\.?(?=\s|$)/i, '');
+      return {
+        zone: p.zone,
+        title: p.zone ? undefined : name,
+        area: p.zone ? name : undefined,
+        hours: p.hours ?? '',
+        unknown: /event day/i.test(name) ? 'Controlled on Spurs event days: check the signs' : 'Hours are on the zone entry signs',
+      };
+    },
+    link: 'https://enfield.traffweb.app/',
+  },
 ];
+
+/** "GRANGE PARK" → "Grange Park"; names already in mixed case stay as they are. */
+function shout(name) {
+  return name === name.toUpperCase() ? name.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase()) : name;
+}
 
 const ZONE_NOTE =
   'Covers every street in the zone. Outside these hours, residents, shared-use and pay bays and single yellow lines are free unless a sign says otherwise. Never double yellows.';

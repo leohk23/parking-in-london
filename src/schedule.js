@@ -36,6 +36,9 @@ export function parseSchedule(text) {
     .replace(/[‐-―]/g, '-')
     .split(/\bmax(?:imum)?\b|\bno return\b/)[0]
     .replace(ALL_DAY_RE, ' 00:00-24:00 ')
+    // "M-Sat", "M-F": Monday to Saturday, Monday to Friday.
+    .replace(/\bm\s*-\s*(?=(?:f|fri|sat|sun)\b)/g, 'mon-')
+    .replace(/(\bmon\s*-\s*)f\b/g, '$1fri')
     // Durations ("limited waiting 2 hours") aren't clock times.
     .replace(/\b\d+(?:\.\d+)?\s*(?:hours?|hrs?|mins?|minutes?)\b/g, ' ');
 
