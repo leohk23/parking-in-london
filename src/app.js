@@ -1,11 +1,14 @@
 // Page wiring: search form → geocode → fetch sources → evaluate → map and list.
 /* global L */
 
-import { geocode, reverseGeocode } from './geocode.js';
+import { geocode, reverseGeocode, councilAt } from './geocode.js';
 import { attachSuggestions } from './autocomplete.js';
+import { loadRecent, addRecent, clearRecent } from './recent.js';
+import { createCache } from './cache.js';
 import { fetchOsm } from './sources/osm.js';
 import { fetchCamden } from './sources/camden.js';
-import { fetchCouncilZones } from './sources/council-zones.js';
+import { fetchCouncilZones, outsideZones } from './sources/council-zones.js';
+import { fetchKerbside } from './sources/kerbside.js';
 import { zoneOptions, zonesCover, normaliseName } from './sources/zones.js';
 import { evaluateOption, STATUS_RANK, STATUS_LABELS } from './evaluate.js';
 import { londonClock, isBankHoliday } from './schedule.js';
@@ -17,6 +20,7 @@ const SOURCE_LABELS = {
   camden: 'Camden Council open data',
   zones: 'Council zone hours',
   'council-zones': "Council's zone map",
+  kerbside: "Council's kerbside map",
 };
 const COLORS = () => {
   const css = getComputedStyle(document.documentElement);
@@ -55,13 +59,68 @@ const LocateControl = L.Control.extend({
 });
 new LocateControl().addTo(map);
 
+// Full-screen map. iPhones don't allow real full screen for a page element, so
+// there the map fills the browser window instead.
+const EXPAND_ICON =
+  '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+const SHRINK_ICON =
+  '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+let fullscreenLink;
+const FullscreenControl = L.Control.extend({
+  options: { position: 'topleft' },
+  onAdd() {
+    const bar = L.DomUtil.create('div', 'leaflet-bar');
+    fullscreenLink = L.DomUtil.create('a', 'map-fullscreen', bar);
+    fullscreenLink.href = '#';
+    fullscreenLink.setAttribute('role', 'button');
+    L.DomEvent.disableClickPropagation(bar);
+    L.DomEvent.on(fullscreenLink, 'click', (e) => {
+      L.DomEvent.preventDefault(e);
+      toggleFullscreen();
+    });
+    return bar;
+  },
+});
+new FullscreenControl().addTo(map);
+syncFullscreen();
+document.addEventListener('fullscreenchange', syncFullscreen);
+document.addEventListener('keydown', (e) => e.key === 'Escape' && document.body.classList.contains('map-full') && setWindowFill(false));
+
+function isFullscreen() {
+  return document.fullscreenElement === $('#map') || document.body.classList.contains('map-full');
+}
+
+function toggleFullscreen() {
+  if (document.fullscreenElement) return document.exitFullscreen();
+  if (document.body.classList.contains('map-full')) return setWindowFill(false);
+  const el = $('#map');
+  if (el.requestFullscreen) el.requestFullscreen().catch(() => setWindowFill(true));
+  else setWindowFill(true);
+}
+
+function setWindowFill(on) {
+  document.body.classList.toggle('map-full', on);
+  syncFullscreen();
+}
+
+function syncFullscreen() {
+  const full = isFullscreen();
+  fullscreenLink.innerHTML = full ? SHRINK_ICON : EXPAND_ICON;
+  fullscreenLink.title = full ? 'Exit full screen' : 'Full screen map';
+  fullscreenLink.setAttribute('aria-label', fullscreenLink.title);
+  setTimeout(() => map.invalidateSize(), 50);
+}
+
 let current = null;
 let searchCount = 0;
+// OpenStreetMap is slow and its car parks rarely change, so answers are kept for a week.
+const osmCache = createCache('osm', { maxAgeMs: 7 * 24 * 3600 * 1000, maxEntries: 8 });
 
 // The place picked from the suggestions (or found from your location), reused
 // by Find while the box still shows its name.
 let pickedPlace = null;
 attachSuggestions($('#q'), $('#suggestions'), {
+  recent: { load: () => loadRecent(), clear: () => clearRecent() },
   onPick: (place) => {
     pickedPlace = place;
     search({ query: place.label, dest: place });
@@ -172,13 +231,15 @@ async function search({ query, dest }) {
     }
     if (!isLatest()) return;
     saveToUrl(query ?? $('#q').value);
+    if (dest.label !== 'Your location') addRecent(dest);
 
     const area = bboxAround(dest.point, radius);
     const clock = londonClock(arrival);
     const destStreet = dest.street && normaliseName(dest.street);
     const prepare = (o) => {
       const distance = distanceToOption(dest.point, o);
-      const here = o.kind === 'zone' ? distance === 0 : Boolean(destStreet && normaliseName(o.title) === destStreet);
+      const here =
+        o.kind === 'zone' || o.kind === 'area' ? distance === 0 : Boolean(destStreet && normaliseName(o.title) === destStreet);
       return { ...evaluateOption(o, clock, stay), distance, here };
     };
 
@@ -187,12 +248,19 @@ async function search({ query, dest }) {
     const sources = [
       {
         name: 'OpenStreetMap',
-        load: fetchOsm(area, { street: dest.street, center: dest.point, streets: zonesCover(area) }).then((r) => [
+        load: fetchOsm(area, { street: dest.street, center: dest.point, streets: zonesCover(area), cache: osmCache }).then((r) => [
           ...r.options,
           ...zoneOptions(r.streets),
         ]),
       },
-      { name: "the council's zone map", load: fetchCouncilZones(area).then((r) => r.options) },
+      {
+        name: "the council's zone map",
+        load: Promise.all([fetchCouncilZones(area), councilAt(dest.point).catch(() => null)]).then(([r, council]) => [
+          ...r.options,
+          ...outsideZones(r, council, dest.point),
+        ]),
+      },
+      { name: "the council's kerbside map", load: fetchKerbside(area).then((r) => r.options) },
       { name: 'Camden bay data', load: fetchCamden(area).then((r) => r.options) },
     ];
     const waiting = new Set(sources.map((src) => src.name));
@@ -275,8 +343,10 @@ function drawMap(dest, options) {
   L.circle(dest.point, { radius: Number($('#radius').value), color: colors.unknown, weight: 1, fill: false, dashArray: '4 6' }).addTo(resultsLayer);
 
   // Zones go underneath; then worst first so free options end up on top.
+  // Area-wide notes ("no parking zone here") have nothing to draw.
   const order = (o) => (o.kind === 'zone' ? -1 : 0);
-  for (const o of [...options].sort((a, b) => order(a) - order(b) || STATUS_RANK[b.status] - STATUS_RANK[a.status])) {
+  const drawable = options.filter((o) => o.point || o.lines || o.polygons);
+  for (const o of drawable.sort((a, b) => order(a) - order(b) || STATUS_RANK[b.status] - STATUS_RANK[a.status])) {
     const color = colors[o.status];
     let layer;
     if (o.polygons) {
@@ -288,9 +358,9 @@ function drawMap(dest, options) {
         fillOpacity: o.here ? 0.12 : 0.05,
         dashArray: o.here ? null : '6 5',
       });
-      layer.bindTooltip(esc(o.title), { permanent: true, direction: 'center', className: 'zone-label' });
+      if (o.kind === 'zone') layer.bindTooltip(esc(o.title), { permanent: true, direction: 'center', className: 'zone-label' });
     } else if (o.lines) {
-      layer = L.polyline(o.lines, { color, weight: o.kind === 'bay' ? 7 : 6, opacity: 0.9 });
+      layer = L.polyline(o.lines, { color, weight: o.kind === 'bay' || o.kind === 'kerb' ? 5 : 6, opacity: 0.9 });
     } else {
       layer = L.circleMarker(o.point, { radius: 9, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 });
     }
@@ -300,7 +370,7 @@ function drawMap(dest, options) {
   }
   // Zones can be large, so the view fits the destination and nearby spaces only.
   const bounds = L.latLngBounds([dest.point]);
-  for (const o of options.filter((o) => !o.polygons && (o.distance < 600 || o.here))) {
+  for (const o of drawable.filter((o) => !o.polygons && (o.distance < 600 || o.here))) {
     if (o.point) bounds.extend(o.point);
     else o.lines.forEach((line) => bounds.extend(line));
   }
@@ -333,7 +403,9 @@ function cardHtml(o, { compact = false } = {}) {
   const where = o.here
     ? o.kind === 'zone'
       ? "you're in this zone"
-      : 'your street'
+      : o.kind === 'area'
+        ? 'here'
+        : 'your street'
     : `${Math.round(o.distance / 10) * 10} m · ${Math.max(1, Math.round(o.distance / 80))} min walk`;
   const head = `
     <div class="card-head">

@@ -35,18 +35,21 @@ Searches go in the URL (`?q=Wimbledon+Park+Road&stay=120`), so you can bookmark 
 
 ## Where the data comes from
 
-London has no single open dataset of parking restrictions, so the app combines four sources. Each result shows which source it came from, and each appears as soon as it loads.
+London has no single open dataset of parking restrictions, so the app combines several sources. Each result shows which source it came from, and each appears as soon as it loads.
 
 | Source | Covers | Notes |
 | --- | --- | --- |
 | [OpenStreetMap](https://www.openstreetmap.org) via the Overpass API | All of London: car parks (fee and opening hours), plus street parking where mappers have tagged it | Street parking coverage is patchy. You can improve it yourself, e.g. with the StreetComplete app. |
-| Councils' own zone maps (`src/sources/council-zones.js`) | Every street in a borough: controlled parking zone boundaries with their days, hours and charges, queried live | Hammersmith & Fulham so far. The council's map can lag behind recent hour changes, so the zone entry sign has the final word. |
+| Councils' own zone maps (`src/sources/council-zones.js`) | Every street in a borough: controlled parking zone boundaries with their days, hours and charges, queried live | Hammersmith & Fulham and Sutton so far. Inside one of these boroughs but outside every zone, the app says there's no parking zone (it checks the borough with postcodes.io). The council's map can lag behind recent changes, so the zone entry sign has the final word. |
+| Councils' kerbside maps (`src/sources/kerbside.js`) | Yellow lines, bus stops, school markings and bays, with their times | Sutton so far. |
 | [Camden Council "Parking Bays"](https://opendata.camden.gov.uk/Transport/Parking-Bays/7hiv-3r9k) | Every on-street bay in Camden, with type, times, max stay and tariff | Loaded only when you search in or near Camden. |
 | `data/zones.js` | Controlled parking zone (CPZ) hours for streets you add by hand, taken from council websites | Seeded with Wandsworth's Southfields and Putney A6 zones and Wimbledon Park Road. |
 
 As you type, suggestions come from [Photon](https://photon.komoot.io) (built for search-as-you-type, limited to London) and, for postcodes, [postcodes.io](https://postcodes.io). Pressing Find without picking a suggestion looks the text up with postcodes.io or OpenStreetMap's Nominatim.
 
-OpenStreetMap's Overpass servers can be slow when busy. If the main server hasn't answered within 6 seconds, the same request also goes to a mirror, and whichever answers first is used.
+OpenStreetMap's Overpass servers can be slow when busy. If the main server hasn't answered within 6 seconds, the same request also goes to a mirror, and whichever answers first is used. Answers are kept in the browser for a week, so a repeat search of the same place doesn't wait for them.
+
+Recent destinations (the last six) are kept in the browser too, and shown when you tap the empty search box.
 
 ### Checking a place against the live data
 
@@ -75,7 +78,7 @@ The street is then drawn on the map from OpenStreetMap geometry, using the zone 
 
 ### Adding another borough's zone map
 
-Many councils publish their zone boundaries on an ArcGIS map service (search data.gov.uk for "controlled parking zones"). If the layer has fields for days and hours, add an entry to `ZONE_LAYERS` in `src/sources/council-zones.js` with its URL, a rough `bbox` and functions that read the zone name, hours and cost.
+Many councils publish their zone boundaries on an ArcGIS or WFS map service (search data.gov.uk for "controlled parking zones"). If the layer has days and hours, add an entry to `ZONE_LAYERS` in `src/sources/council-zones.js`: a rough `bbox`, the council's name as postcodes.io gives it (`district`), a `url` built with `arcgisQuery` or `wfsQuery`, and a `read` function that returns the zone, hours and cost. Kerbside layers go in `KERB_LAYERS` in `src/sources/kerbside.js` the same way. The service must allow browser requests (CORS); the probe workflow is a quick way to check a layer from GitHub's servers.
 
 ## Not covered yet
 

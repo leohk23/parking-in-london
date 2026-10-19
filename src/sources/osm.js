@@ -8,7 +8,7 @@
 import { parseSchedule } from '../schedule.js';
 
 // The main Overpass server first; mirrors join in if it's slow or failing.
-const OVERPASS_URLS = [
+export const OVERPASS_URLS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
@@ -51,8 +51,12 @@ nwr["amenity"="parking"](${bbox})->.parking;
 out geom;`;
 }
 
-export async function fetchOsm(bbox, { street, center, streets, fetchImpl = fetch, endpoints = OVERPASS_URLS, hedgeAfterMs = HEDGE_AFTER_MS } = {}) {
-  const body = new URLSearchParams({ data: overpassQuery(bbox, { street, center, streets }) }).toString();
+/** `cache` ({ get, set }) keeps answers for repeat searches of the same place. */
+export async function fetchOsm(bbox, { street, center, streets, cache, fetchImpl = fetch, endpoints = OVERPASS_URLS, hedgeAfterMs = HEDGE_AFTER_MS } = {}) {
+  const query = overpassQuery(bbox, { street, center, streets });
+  const cached = cache?.get(query);
+  if (cached) return { ...parseOsm(cached), cached: true };
+  const body = new URLSearchParams({ data: query }).toString();
   let json;
   try {
     json = await firstSuccessful(endpoints, hedgeAfterMs, async (url, signal) => {
@@ -72,6 +76,7 @@ export async function fetchOsm(bbox, { street, center, streets, fetchImpl = fetc
       cause: err,
     });
   }
+  cache?.set(query, json);
   return parseOsm(json);
 }
 

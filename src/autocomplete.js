@@ -1,14 +1,19 @@
-// The suggestion dropdown under the destination box: it appears 300 ms after
-// typing stops (from 3 characters), and supports arrow keys, Enter to pick and
-// Escape to close. Picking calls onPick with { label, point, street }.
+// The dropdown under the destination box. With fewer than 3 characters typed
+// it lists recent searches; after that, suggestions appear 300 ms after typing
+// stops. Arrow keys move, Enter picks, Escape closes. Picking calls onPick
+// with { label, point, street }.
 
 import { fetchSuggestions } from './suggest.js';
 
 const PIN_ICON =
   '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="2.5" fill="currentColor"/></svg>';
+const CLOCK_ICON =
+  '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 
-export function attachSuggestions(input, list, { onPick, fetchImpl, delayMs = 300 } = {}) {
+/** `recent` is { load(), clear() } for the recent-searches list. */
+export function attachSuggestions(input, list, { onPick, recent, fetchImpl, delayMs = 300 } = {}) {
   let items = [];
+  let showingRecent = false;
   let active = -1;
   let timer;
   let controller;
@@ -35,15 +40,26 @@ export function attachSuggestions(input, list, { onPick, fetchImpl, delayMs = 30
 
   const renderItems = () => {
     if (!items.length) return show('<li class="suggestion-note">No suggestions found</li>');
+    const icon = showingRecent ? CLOCK_ICON : PIN_ICON;
     show(
-      items
-        .map(
-          (item, i) =>
-            `<li id="${list.id}-${i}" role="option" class="suggestion${i === active ? ' active' : ''}" aria-selected="${i === active}" data-index="${i}">${PIN_ICON}<span>${escapeHtml(item.label)}</span></li>`,
-        )
-        .join(''),
+      (showingRecent ? '<li class="suggestion-heading" role="presentation">Recent</li>' : '') +
+        items
+          .map(
+            (item, i) =>
+              `<li id="${list.id}-${i}" role="option" class="suggestion${i === active ? ' active' : ''}" aria-selected="${i === active}" data-index="${i}">${icon}<span>${escapeHtml(item.label)}</span></li>`,
+          )
+          .join('') +
+        (showingRecent ? '<li class="suggestion-clear" role="presentation"><button type="button" data-action="clear">Clear recent searches</button></li>' : ''),
     );
     if (active >= 0) input.setAttribute('aria-activedescendant', `${list.id}-${active}`);
+  };
+
+  const showRecent = () => {
+    items = recent?.load() ?? [];
+    showingRecent = true;
+    active = -1;
+    if (items.length) renderItems();
+    else close();
   };
 
   const pick = (item) => {
@@ -59,20 +75,24 @@ export function attachSuggestions(input, list, { onPick, fetchImpl, delayMs = 30
     clearTimeout(timer);
     controller?.abort();
     const q = input.value.trim();
-    if (q.length < 3) {
+    if (q.length < 3) return showRecent();
+    if (showingRecent || !items.length) {
       items = [];
-      return close();
+      showingRecent = false;
+      show('<li class="suggestion-note">Searching…</li>');
     }
-    if (!items.length) show('<li class="suggestion-note">Searching…</li>');
     timer = setTimeout(async () => {
       controller = new AbortController();
+      let found;
       try {
-        items = await fetchSuggestions(q, { fetchImpl, signal: controller.signal });
+        found = await fetchSuggestions(q, { fetchImpl, signal: controller.signal });
       } catch (err) {
         if (err.name === 'AbortError') return;
-        items = [];
+        found = [];
       }
       if (input.value.trim() !== q || document.activeElement !== input) return;
+      items = found;
+      showingRecent = false;
       active = -1;
       renderItems();
     }, delayMs);
@@ -96,12 +116,20 @@ export function attachSuggestions(input, list, { onPick, fetchImpl, delayMs = 30
   });
 
   input.addEventListener('focus', () => {
-    if (items.length && input.value.trim() !== pickedLabel) renderItems();
+    const q = input.value.trim();
+    if (q.length < 3) showRecent();
+    else if (items.length && q !== pickedLabel) renderItems();
   });
   input.addEventListener('blur', () => setTimeout(close, 150));
 
   // pointerdown rather than click, so picking works before the input's blur closes the list.
   list.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('[data-action="clear"]')) {
+      e.preventDefault();
+      recent?.clear();
+      items = [];
+      return close();
+    }
     const option = e.target.closest('[data-index]');
     if (!option) return;
     e.preventDefault();
