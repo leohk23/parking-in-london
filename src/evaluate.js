@@ -12,7 +12,7 @@ const HORIZON = 8 * DAY;
 export const EFFECTS = {
   free: { label: 'Free', status: 'free' },
   paid: { label: 'Pay to park', status: 'paid' },
-  controlled: { label: 'Pay or permit (check the bay sign)', status: 'paid' },
+  controlled: { label: 'Pay or permit', status: 'paid' },
   permit: { label: 'Permit holders only', status: 'no' },
   restricted: { label: 'Restricted', status: 'no' },
   'no-parking': { label: 'No parking', status: 'no' },

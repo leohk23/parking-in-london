@@ -19,9 +19,9 @@ test('Wimbledon Park Road on Sunday afternoon: every zone is free until Monday',
   assert.deepEqual(
     o.results.map((r) => [r.label, r.status, r.summary]),
     [
-      ['Zone A6', 'free', 'Free until Mon 09:30, then pay or permit (check the bay sign)'],
-      ['Zone S1', 'free', 'Free until Mon 09:30, then pay or permit (check the bay sign)'],
-      ['Zone S5', 'free', 'Free until Mon 14:00, then pay or permit (check the bay sign)'],
+      ['Zone A6', 'free', 'Free until Mon 09:30, then pay or permit'],
+      ['Zone S1', 'free', 'Free until Mon 09:30, then pay or permit'],
+      ['Zone S5', 'free', 'Free until Mon 14:00, then pay or permit'],
     ],
   );
 });
@@ -37,7 +37,7 @@ test('Wimbledon Park Road on a weekday morning: only the S5 stretch is free', ()
       ['Zone S5', 'free'],
     ],
   );
-  assert.equal(o.results[1].summary, 'Pay or permit (check the bay sign) until 16:30, then free');
+  assert.equal(o.results[1].summary, 'Pay or permit until 16:30, then free');
 });
 
 test('a stay that runs into control hours is flagged', () => {
@@ -46,7 +46,7 @@ test('a stay that runs into control hours is flagged', () => {
   assert.equal(s5.now.status, 'free');
   assert.equal(s5.status, 'paid');
   assert.equal(s5.changesDuringStay, true);
-  assert.equal(s5.summary, 'Free until 14:00, then pay or permit (check the bay sign)');
+  assert.equal(s5.summary, 'Free until 14:00, then pay or permit');
 });
 
 test('street names only match inside the borough', () => {

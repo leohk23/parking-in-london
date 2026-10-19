@@ -44,9 +44,9 @@ test('Stamford Court on Sunday evening: inside Zone M, free until Monday 9am', (
   assert.ok(distanceToOption(STAMFORD_COURT, a) > 0);
 
   const sunday = londonClock(new Date('2026-10-18T19:35:00Z'));
-  assert.equal(evaluateOption(m, sunday, 120).results[0].summary, 'Free until Mon 09:00, then pay or permit (check the bay sign)');
+  assert.equal(evaluateOption(m, sunday, 120).results[0].summary, 'Free until Mon 09:00, then pay or permit');
   // A seven-day zone is still controlled on a Sunday evening.
-  assert.equal(evaluateOption(a, sunday, 120).results[0].summary, 'Pay or permit (check the bay sign) until 23:00, then free');
+  assert.equal(evaluateOption(a, sunday, 120).results[0].summary, 'Pay or permit until 23:00, then free');
 });
 
 test('point in polygon handles holes', () => {
