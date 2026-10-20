@@ -227,9 +227,10 @@ function scheduleText(text) {
     .replace(/\bon school entrance markings?\b|\boff-street\b/gi, ' ')
     // "School Keep Clear", "School Buses": names, not school terms (which the hours reader refuses).
     .replace(/\bschool\b/gi, ' ')
-    // Bay numbers: "RP 9", "bay 2", "DIS 16", "CC- 09", "Permit holder only 00176".
-    .replace(/\b(?:rp\s*\d+|bay\s+\d+|dis\s*\d+|cc-\s*\d+|0\d+)\b/gi, ' ')
+    // Codes first, whole: "Zone CH1", "TH-0106" (not Thursday), "D3".
     .replace(/\b(zone\s+[a-z]*\d\w*|[a-z]{1,3}-?\d+|no\.\s*\d+)\b/gi, ' ')
+    // Then bay numbers: "RP 9", "bay 2", "DIS 16", "CC- 09", "Permit holder only 00176".
+    .replace(/\b(?:rp\s*\d+|bay\s+\d+|dis\s*\d+|cc-\s*\d+|0\d+)\b/gi, ' ')
     .replace(/\b(max(imum)?\s+stay|limited\s+waiting|no\s+return(\s+(within|for))?)?\s*\d+(\.\d+)?\s*(hours?|hrs?|mins?|minutes?)\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();

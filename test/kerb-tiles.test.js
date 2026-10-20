@@ -204,3 +204,7 @@ test("Lewisham's two-part hours and Greenwich's labels", async () => {
   assert.equal(greenwichZone(feature('EX-HATCH-PERMIT-ELIGIBLE-CPZ-LB BEXLEY-ABBEY WOOD-AW', 'AW*', 'MON-FRI_11am-1pm')), null);
   assert.equal(greenwichZone(feature('Exempt')), null);
 });
+
+test("a bay code like TH-0106 isn't read as Thursday", () => {
+  assert.equal(summary('Car Club Permit Holders Only TH-0106', 'Car Club Parking Place'), 'Car club vehicles only');
+});
