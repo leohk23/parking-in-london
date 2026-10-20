@@ -6,7 +6,7 @@
 // A list file is { source, updated, localities?, boundary: rings of [lat, lon], streets },
 // where streets maps a name ("Albert Road", or "Albert Road, New Malden" where
 // the council names the locality) to its zone rules:
-//   { zone, area, hours, permitOnly?, cost?, maxStay?, numbers? | section? | blocks?, unknown?, notes? }
+//   { zone, area, hours, permitOnly?, cost?, maxStay?, numbers? | section? | blocks?, unknown?, eventOnly?, notes? }
 
 import { parseSchedule } from '../schedule.js';
 import { bboxesOverlap, distance, inBbox, inPolygon } from '../geo.js';
@@ -250,7 +250,11 @@ function streetPart(p) {
       .filter(Boolean)
       .join(' · '),
     rules: schedule ? [{ when: schedule, effect: p.permitOnly ? 'permit' : 'controlled' }] : [],
-    otherwise: schedule ? { effect: 'free' } : { effect: 'unknown', label: p.unknown ?? `Hours not recognised: ${p.hours}` },
+    otherwise: schedule
+      ? { effect: 'free' }
+      : p.eventOnly
+        ? { effect: 'free', label: 'Free except on event days: check the signs' }
+        : { effect: 'unknown', label: p.unknown ?? `Hours not recognised: ${p.hours}` },
     notes: p.notes ?? [],
   };
 }

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as KERB from '../scripts/build-kerb-tiles.mjs';
 import { decode, parseTraffweb, traffwebElement, simplify, tileFile, buildKerbTiles } from '../scripts/build-kerb-tiles.mjs';
 import { STEP } from '../scripts/build-osm-tiles.mjs';
 import { decodeTile, fetchKerbside, kerbPart, KERB_LAYERS } from '../src/sources/kerbside.js';
@@ -111,16 +112,24 @@ test('Harrow and Enfield zones, copied from the councils', () => {
   assert.equal(spurs.parts[0].otherwise.label, 'Free except on event days: check the signs');
 });
 
-test("Westminster bays get their sub-zone's hours from the transcribed PDF", async () => {
-  const { westminsterRule } = await import('../scripts/build-kerb-tiles.mjs');
-  const rule = (...args) => summary(...westminsterRule(...args).reverse());
-  assert.equal(rule('RESIDENT BAY', 'A2', 'ECCLESTON SQUARE'), 'Permit holders only until 22:00, then free');
-  assert.equal(rule('RESIDENT BAY', 'F1', 'GLOUCESTER PLACE'), 'Permit holders only');
-  assert.equal(rule('RESIDENT BAY', 'D4', 'MAUNSEL STREET'), 'Permit holders only until 22:30, then free');
-  assert.equal(rule('PBP BAY', 'E1', 'MOUNT STREET'), 'Pay to park until 18:30, then free');
-  assert.equal(rule('SHARED USE BAY', 'B6', 'PORCHESTER TERRACE'), 'Pay to park until 18:30, then free');
-  assert.equal(rule('MOTORCYCLE BAY', 'G1', 'DEAN STREET'), 'Motorcycles only');
-  assert.equal(rule('HOSPITAL BAY', 'F2', 'PRAED STREET'), 'Hospital only');
+test('wordings from the inner London councils', () => {
+  assert.equal(summary('Paid Parking Only Mon-Sat 8.30am-6.30pm Max Stay 2hrs No Return Within 1hr', 'Paid Parking Only'), 'Pay to park until 18:30, then free');
+  const emirates = kerbPart('Zone G Permit Holders Mon-Fri 8.30am-6.30pm and Emirates Stadium events', 'Permit Bay');
+  assert.equal(summary('Zone G Permit Holders Mon-Fri 8.30am-6.30pm and Emirates Stadium events', 'Permit Bay'), 'Permit holders only until 18:30, then free');
+  assert.deepEqual(emirates.notes, ['Also controlled during Emirates Stadium events: check the signs.']);
+  assert.match(kerbPart("Resident Permit Holders Mon-Fri excl Bank Hols 8.30am-6.30pm and Sat-Sun incl Bank Hols 8.30am-6.30pm when test matches are held at Lord's Cricket Ground", 'Resident Bay').notes[0], /^Also Sat-Sun incl Bank Hols 8.30am-6.30pm when test matches/);
+  assert.equal(summary('School Keep Clear Mon-Fri 8am-9.30am and 2.30pm-4.30pm', 'School Keep Clear'), 'Free until 14:30, then no stopping (school or crossing markings)');
+  assert.equal(summary('Disabled Bay - blue badge holders only 4 hours max stay Mon-Fri 8.30am-6.30pm no max stay outside these times', 'Disabled Blue Badge'), 'Blue Badge holders only');
+  assert.equal(summary('RP 9 Mon-Sat 8.30am-10pm and Sun 4pm-10pm', 'RP 9'), 'Permit holders only until 22:00, then free');
+  assert.equal(summary('4hr Chargeable or Zone G Permit Mon-Fri 8.30am-6.30pm', 'Cashless Shared Use'), 'Pay to park until 18:30, then free');
+});
+
+test("Camden's bays are left to its open data", () => {
+  const { TRAFFWEB_SOURCES } = KERB;
+  const camden = TRAFFWEB_SOURCES.find((s) => s.id === 'camden');
+  const feature = (order_type) => ({ props: { order_type, restriction: `${order_type} Mon-Fri 8.30am-6.30pm` }, lines: [[[51.54, -0.14], [51.541, -0.14]]] });
+  assert.equal(traffwebElement('camden', feature('Resident Permit Holders Parking Place'), camden.skip), null);
+  assert.ok(traffwebElement('camden', feature('No Waiting'), camden.skip));
 });
 
 test('Islington zones from its MapThat map', async () => {

@@ -57,14 +57,18 @@ export function streetParts(found) {
   const byZone = new Map(zones.map((z) => [z.zone, z]));
   return [...byZone.values()].map(({ zone, area, hours }) => {
     // "Monday to Saturday 8:30am to 6:30pm (part); Monday to Sunday … (part)": parts of the zone differ.
-    const parts = hours.split(/\s*;\s*/).map((h) => h.replace(/\s*\(part\)\s*$/i, ''));
+    // "…; Event days 11:00am to 11:00pm": Twickenham Stadium's, which go in a note.
+    const all = hours.split(/\s*;\s*/).map((h) => h.replace(/\s*\(part\)\s*$/i, ''));
+    const events = all.filter((h) => /^event days?\b/i.test(h));
+    const parts = all.filter((h) => !events.includes(h));
     return {
       zone,
       area,
-      hours: parts.join('; ').replace(/\s*\(bank and public holidays free\)/gi, ''),
+      ...(parts.length ? { hours: parts.join('; ').replace(/\s*\(bank and public holidays free\)/gi, '') } : { eventOnly: true, unknown: 'Controlled on Twickenham Stadium event days: check the signs' }),
       ...(partial && { section: 'part of the road' }),
       notes: [
         parts.length > 1 && 'Hours differ in parts of this zone: check the signs.',
+        ...events.map((e) => `Also controlled on Twickenham Stadium ${e.replace(/^event days/i, 'event days,')}.`),
         /bank and public holidays free/i.test(hours) && 'Free on bank and public holidays.',
       ].filter(Boolean),
     };

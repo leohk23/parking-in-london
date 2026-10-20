@@ -55,7 +55,8 @@ test('Sutton is queried by WFS, in lon/lat, only near Sutton', async () => {
   await fetchCouncilZones(bboxAround(KT4_8RW, 500), { fetchImpl });
   assert.equal(urls.length, 1);
   assert.match(urls[0], /sutton\.statmap\.co\.uk.*controlled_parking_zones/);
-  const kerb = await fetchKerbside(bboxAround([51.4957, -0.2437], 500), { fetchImpl });
+  // Hammersmith: no live kerbside map there (its lines come from the prebuilt tiles).
+  const kerb = await fetchKerbside(bboxAround([51.4957, -0.2437], 500), { fetchImpl, layers: KERB_LAYERS.filter((l) => !l.tiled) });
   assert.equal(kerb.skipped, true);
 });
 

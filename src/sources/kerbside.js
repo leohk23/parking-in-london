@@ -33,7 +33,16 @@ export const KERB_LAYERS = [
   tiled('lewisham', 'Lewisham', [51.415, -0.076, 51.495, 0.042], 'https://lewisham.traffweb.app/'),
   tiled('greenwich', 'Greenwich', [51.423, -0.031, 51.511, 0.125], 'https://greenwich.traffweb.app/'),
   tiled('bexley', 'Bexley', [51.407, 0.073, 51.513, 0.213], 'https://bexley.traffweb.app/'),
-  tiled('westminster', 'Westminster', [51.481, -0.218, 51.541, -0.108], 'https://www.westminster.gov.uk/parking/parking-zones-and-prices'),
+  tiled('croydon', 'Croydon', [51.293, -0.164, 51.425, 0.003], 'https://croydon.traffweb.app/'),
+  tiled('hounslow', 'Hounslow', [51.421, -0.462, 51.504, -0.242], 'https://hounslow.traffweb.app/'),
+  tiled('barnet', 'Barnet', [51.553, -0.3, 51.667, -0.127], 'https://barnet.traffweb.app/'),
+  tiled('tower-hamlets', 'Tower Hamlets', [51.484, -0.082, 51.545, 0.012], 'https://towerhamlets.traffweb.app/'),
+  tiled('hackney', 'Hackney', [51.518, -0.107, 51.579, -0.018], 'https://hackney.traffweb.app/'),
+  tiled('westminster', 'Westminster', [51.483, -0.219, 51.542, -0.11], 'https://westminster.traffweb.app/'),
+  tiled('kensington-chelsea', 'Kensington & Chelsea', [51.475, -0.232, 51.532, -0.147], 'https://rbkc.traffweb.app/'),
+  tiled('hammersmith-fulham', 'Hammersmith & Fulham', [51.463, -0.256, 51.535, -0.177], 'https://lbhf.traffweb.app/'),
+  // Only Camden's lines and markings: its bays come from its open data (camden.js).
+  tiled('camden', 'Camden', [51.511, -0.216, 51.574, -0.103], 'https://camden.traffweb.app/'),
 ];
 
 export async function fetchKerbside(bbox, { fetchImpl = fetch, layers = KERB_LAYERS, tilesBase = TILES } = {}) {
@@ -130,8 +139,25 @@ function toShape(geometry) {
   }
 }
 
+/**
+ * Controls on days the app can't know, after the usual hours: "… and Emirates
+ * Stadium events", "… and Sat-Sun 8.30am-6.30pm when test matches … are held at
+ * Lord's", "… during school term time". The rest, and a note saying so.
+ */
+export function occasionalClause(text) {
+  const event = /\s+(?:and|or)\s+((?:(?!\band\b).)*?\bevents?)\s*$/i.exec(text);
+  if (event) return { rest: text.slice(0, event.index), note: `Also controlled during ${event[1].replace(/^(?:on|for)\s+/i, '')}: check the signs.` };
+  const when = /\s+and\s+((?:(?!\band\b).)*?)\s+when\s+(.*)$/i.exec(text);
+  if (when) return { rest: text.slice(0, when.index), note: `Also ${when[1]} when ${when[2]}.` };
+  const term = /\s*\b(?:(?:during|in)\s+)?(?:school\s+)?term(?:\s+time)?\b/i.exec(text);
+  if (term) return { rest: text.slice(0, term.index) + text.slice(term.index + term[0].length), note: 'During school term time only: the app applies it every week.' };
+  return { rest: text };
+}
+
 /** What a restriction means for parking, from its wording. */
-export function kerbPart(text, type = '') {
+export function kerbPart(fullText, type = '') {
+  const { rest: text, note } = occasionalClause(fullText);
+  const notes = note ? [note] : [];
   const t = `${type} ${text}`.toLowerCase();
   // Event days aren't on a calendar the app knows: free otherwise.
   if (/event day|match day/.test(t)) {
@@ -139,30 +165,33 @@ export function kerbPart(text, type = '') {
   }
   // Exemption areas let only taxis or goods vehicles stop on a red route.
   if (/red route exemption/.test(t)) return { label: '', rules: [{ effect: 'no-parking', label: 'No stopping (red route)' }], otherwise: { effect: 'free' }, notes: [tidy(text)] };
+  // Blue Badge bays: whatever their hours, not for other drivers.
+  if (/disabled|blue badge/.test(t)) return { label: '', rules: [{ effect: 'restricted', label: 'Blue Badge holders only' }], otherwise: { effect: 'free' }, notes };
   let rule;
   if (/red route/.test(t)) rule = { effect: 'no-parking', label: 'No stopping (red route)' };
-  else if (/disabled|blue badge/.test(t)) rule = { effect: 'restricted', label: 'Blue Badge holders only' };
-  else if (/car club/.test(t)) rule = { effect: 'restricted', label: 'Car club vehicles only' };
+  else if (/car club|streetcar/.test(t)) rule = { effect: 'restricted', label: 'Car club vehicles only' };
   else if (/electric|charging/.test(t)) rule = { effect: 'restricted', label: 'Electric vehicle charging only' };
   else if (/loading bay|loading only|loading place/.test(t)) rule = { effect: 'restricted', label: 'Loading only' };
-  else if (/ambulance|doctor|police|taxi|coach|motorcycle|diplomat/.test(t)) {
-    const who = /ambulance|doctor|police|taxi|coach|motorcycle|diplomat/.exec(t)[0];
-    rule = { effect: 'restricted', label: `${{ ambulance: 'Ambulances', doctor: 'Doctors', police: 'Police', taxi: 'Taxis', coach: 'Coaches', motorcycle: 'Motorcycles', diplomat: 'Diplomats' }[who]} only` };
+  else if (/ambulance|doctor|police|taxi|coach|motorcycle|\bmc\b|diplomat/.test(t)) {
+    const who = /ambulance|doctor|police|taxi|coach|motorcycle|\bmc\b|diplomat/.exec(t)[0];
+    rule = { effect: 'restricted', label: `${{ ambulance: 'Ambulances', doctor: 'Doctors', police: 'Police', taxi: 'Taxis', coach: 'Coaches', motorcycle: 'Motorcycles', mc: 'Motorcycles', diplomat: 'Diplomats' }[who]} only` };
   }
   else if (/zig.?zag|keep clear|crossing|pelican|puffin|toucan|h.?bar/.test(t)) rule = { effect: 'no-parking', label: 'No stopping (school or crossing markings)' };
   else if (/bus stop|bus stand|clearway|no stopping/.test(t)) rule = { effect: 'no-parking', label: 'No stopping' };
   // "NWAAT": no waiting at any time.
-  else if (/no waiting|no loading|nwaat|double yellow|single yellow|boxed junction|box junction/.test(t)) rule = { effect: 'no-parking' };
+  else if (/market trader/.test(t)) rule = { effect: 'restricted', label: 'Market traders only' };
+  else if (/no waiting|no loading|nwaat|prohibition of waiting|double yellow|single yellow|boxed junction|box junction/.test(t)) rule = { effect: 'no-parking' };
   else if (/unrestricted/.test(t)) rule = { effect: 'free' };
-  else if (/pay|ticket|shared use/.test(t)) rule = { effect: 'paid' };
+  else if (/pay|paid|ticket|shared use|chargeable/.test(t)) rule = { effect: 'paid' };
   // "Permit Holders or Limited Waiting …": anyone may stay a while.
   else if (/limited waiting/.test(t)) rule = { effect: 'free', label: stayLabel(text) };
-  else if (/permit|resident/.test(t)) rule = { effect: 'permit' };
+  // "RP 9": a residents' parking bay.
+  else if (/permit|resident|\brp\s*\d/.test(t)) rule = { effect: 'permit' };
   else if (/max(imum)? stay/.test(t)) rule = { effect: 'free', label: stayLabel(text) };
   else if (/free/.test(t)) rule = { effect: 'free' };
   // Bays kept for someone else: "Hospital only", "Supreme Court permit bay".
   else if (/\bonly\b/.test(t)) rule = { effect: 'restricted', label: tidy(text) };
-  else return { label: '', rules: [], otherwise: { effect: 'unknown', label: tidy(text) }, notes: [] };
+  else return { label: '', rules: [], otherwise: { effect: 'unknown', label: tidy(fullText) }, notes };
 
   // "At any time", or no times at all (bus stops, box junctions), means always.
   const when = scheduleText(text);
@@ -170,12 +199,12 @@ export function kerbPart(text, type = '') {
   // Wording without times can read as a week with no hours in it.
   if (schedule?.kind === 'weekly' && schedule.byDay.every((day) => !day.length)) schedule = null;
   const always = !schedule && !/\d/.test(when);
-  if (!schedule && !always) return { label: '', rules: [], otherwise: { effect: 'unknown', label: `Times not recognised: ${tidy(text)}` }, notes: [] };
+  if (!schedule && !always) return { label: '', rules: [], otherwise: { effect: 'unknown', label: `Times not recognised: ${tidy(fullText)}` }, notes };
   return {
     label: '',
     rules: [{ ...(always ? {} : { when: schedule }), ...rule }],
     otherwise: { effect: 'free' },
-    notes: [],
+    notes,
   };
 }
 
@@ -196,8 +225,12 @@ function scheduleText(text) {
     .split('/')[0]
     .replace(/\([^)]*\)/g, ' ')
     .replace(/\bon school entrance markings?\b|\boff-street\b/gi, ' ')
+    // "School Keep Clear", "School Buses": names, not school terms (which the hours reader refuses).
+    .replace(/\bschool\b/gi, ' ')
+    // Bay numbers: "RP 9", "bay 2", "DIS 16", "CC- 09", "Permit holder only 00176".
+    .replace(/\b(?:rp\s*\d+|bay\s+\d+|dis\s*\d+|cc-\s*\d+|0\d+)\b/gi, ' ')
     .replace(/\b(zone\s+[a-z]*\d\w*|[a-z]{1,3}-?\d+|no\.\s*\d+)\b/gi, ' ')
-    .replace(/\b(max(imum)?\s+stay|limited\s+waiting|no\s+return(\s+within)?)?\s*\d+(\.\d+)?\s*(hours?|hrs?|mins?|minutes?)\b/gi, ' ')
+    .replace(/\b(max(imum)?\s+stay|limited\s+waiting|no\s+return(\s+(within|for))?)?\s*\d+(\.\d+)?\s*(hours?|hrs?|mins?|minutes?)\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
