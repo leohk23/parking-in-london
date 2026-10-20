@@ -8,8 +8,8 @@
 // data/zones/. A council whose server is down is left out of the tiles for the
 // week, and keeps its committed zone map.
 //
-// Sources: four councils' TraffWeb traffic order maps (GML in British National
-// Grid), Harrow's ArcGIS map server, and Westminster's bays with hours from its PDF.
+// Sources: councils' TraffWeb traffic order maps (GML in British National
+// Grid), and Harrow's ArcGIS map server.
 
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +28,16 @@ export const TRAFFWEB_SOURCES = [
   { id: 'lewisham', tenant: 'lewisham' },
   { id: 'greenwich', tenant: 'greenwich' },
   { id: 'bexley', tenant: 'bexley', zones: true, hours: bexleyHours },
+  { id: 'croydon', tenant: 'croydon' },
+  { id: 'hounslow', tenant: 'hounslow' },
+  { id: 'barnet', tenant: 'barnet' },
+  { id: 'tower-hamlets', tenant: 'towerhamlets' },
+  { id: 'hackney', tenant: 'hackney' },
+  { id: 'westminster', tenant: 'westminster' },
+  { id: 'kensington-chelsea', tenant: 'rbkc' },
+  { id: 'hammersmith-fulham', tenant: 'lbhf' },
+  // Camden's bays come from its open data, with their tariffs (src/sources/camden.js): only the rest here.
+  { id: 'camden', tenant: 'camden', skip: /bay|parking place|permit|payment|pay by|shared|disabled|car club|electric|motorcycle|doctor|diplomat/i },
 ];
 
 // Bexley's map has some zones without hours or codes; its permits page has the
@@ -76,124 +86,9 @@ export const HARROW_LAYERS = {
   34: (a) => ['Car club bay', join('Car club vehicles only', time(a) || 'at any time')],
 };
 
-// Westminster's bays (from Camden's open data portal, which hosts them) say
-// which sub-zone they're in but not their hours. Those are in a PDF,
-// transcribed here: sub-zone → [pay bays and single yellow lines, residents' bays].
-// The script warns when the council links to a newer PDF.
-export const WESTMINSTER_BAYS = 'https://opendata.camden.gov.uk/resource/2579-98vt.json';
-const WESTMINSTER_PAGE = 'https://www.westminster.gov.uk/parking/parking-zones-and-prices';
-const WESTMINSTER_PDF = 'hours-of-control-parking-tariffs-from-march-2026.pdf';
-const MF = 'Mon-Fri 8.30am-6.30pm';
-const MF_SAT = 'Mon-Fri 8.30am-6.30pm and Sat 8.30am-1.30pm';
-const MS = 'Mon-Sat 8.30am-6.30pm';
-const ALWAYS = 'at any time';
-const EVENINGS = '8.30am-8.30pm every day';
-export const WESTMINSTER_HOURS = {
-  A1: [MF, MF],
-  A2: [MF_SAT, 'Mon-Sat 8.30am-10pm'],
-  A3: [MS, ALWAYS],
-  A4: [MS, ALWAYS],
-  BC1: [MF, MF],
-  B2: [MF_SAT, MF_SAT],
-  B3: [MF_SAT, '8.30am-10pm every day'],
-  B4: [MF, MF],
-  B5: [MS, EVENINGS],
-  B6: [MF_SAT, EVENINGS],
-  B7: [MS, ALWAYS],
-  B10: [MF, ALWAYS],
-  B11: [MF, 'Mon-Sat 8.30am-10pm'],
-  CB1: [MF, MF],
-  C1: [MF, MF],
-  C2: [MF, MF],
-  D1: [MF, MF],
-  D4: [MF, MS],
-  E1: [MS, ALWAYS],
-  F1: [MS, ALWAYS],
-  F2: [MS, EVENINGS],
-  F3: [MS, EVENINGS],
-  F4: [MS, ALWAYS],
-  F5: [MS, ALWAYS],
-  F6: [MS, ALWAYS],
-  G1: [MS, ALWAYS],
-  G2: [MS, null],
-};
-// Streets whose residents' bays differ from their sub-zone's (the PDF's footnotes).
-const WESTMINSTER_STREETS = {
-  'MAUNSEL STREET': 'Mon-Sat 8.30am-10.30pm',
-  'KILBURN PARK ROAD': 'Mon-Sat 8am-6.30pm',
-  'CARLTON VALE': 'Mon-Sat 8am-6.30pm',
-  'RANDOLPH GARDENS': 'Mon-Sat 8am-6.30pm',
-};
-
-const WESTMINSTER_SPECIAL = {
-  'DISABLED BAY': 'Blue Badge holders only',
-  'MOTORCYCLE BAY': 'Motorcycles only',
-  'ELECTRIC CHARGING BAY': 'Electric vehicle charging only',
-  'LOADING BAY': 'Loading only',
-  'CAR CLUB BAY': 'Car club vehicles only',
-  'DIPLOMAT BAY': 'Diplomats only',
-  'TAXI BAY': 'Taxis only',
-  'DOCTOR BAY': 'Doctors only',
-  'POLICE BAY': 'Police only',
-  'BUS BAY': 'Buses only',
-  'AMBULANCE BAY': 'Ambulances only',
-};
-
-/** A Westminster bay type, sub-zone and street → [type, restriction] in words kerbPart understands. */
-export function westminsterRule(bayType, subZone, street) {
-  const [paid, resident] = WESTMINSTER_HOURS[subZone] ?? [];
-  const type = bayType.toLowerCase().replace(/\bpbp\b/, 'pay by phone').replace(/^./, (c) => c.toUpperCase());
-  const residentHours = WESTMINSTER_STREETS[street] ?? resident;
-  switch (bayType) {
-    case 'RESIDENT BAY':
-      return [type, residentHours ? `Resident permit holders only ${residentHours}` : 'Resident permit holders only: hours on the sign'];
-    case 'PBP BAY':
-      return [type, paid ? `Pay by phone ${paid}, max stay 4 hours` : 'Pay by phone: hours on the sign'];
-    case 'SHARED USE BAY':
-    case 'VISITOR SHARED USE BAY':
-      return [type, paid ? `Pay by phone or resident permit holders ${paid}` : 'Pay by phone or permit holders: hours on the sign'];
-    case 'COACH BAY':
-      return [type, 'Coaches only 8.30am-midnight every day'];
-    case 'ALL OTHER BAYS':
-      return [type, 'Bay: see the sign'];
-    default:
-      return [type, WESTMINSTER_SPECIAL[bayType] ?? `${type.replace(/ bay$/i, '')} only`];
-  }
-}
-
-/** "POLYGON ((x y, x y, …))" in British National Grid → rings of [lat, lon]. */
-function wktRings(wkt) {
-  return [...wkt.matchAll(/\(([^()]+)\)/g)].map(([, ring]) =>
-    ring.split(',').map((pair) => {
-      const [x, y] = pair.trim().split(/\s+/).map(Number);
-      return osgbToWgs84(x, y).map(round);
-    }),
-  );
-}
-
-async function westminsterKerb() {
-  const page = await get(WESTMINSTER_PAGE);
-  if (!page.includes(WESTMINSTER_PDF)) console.log(`::warning::Westminster links to a new hours PDF: check WESTMINSTER_HOURS against ${WESTMINSTER_PAGE}`);
-  const params = new URLSearchParams({ $limit: '100000', $select: 'wcc_bay_id,wcc_permit_type,wcc_controlled_parking_zone,wcc_lsg_street_name,wcc_space_geometry' });
-  const spaces = await get(`${WESTMINSTER_BAYS}?${params}`, { as: 'json' });
-  // One element per bay, with a ring for each space in it.
-  const bays = new Map();
-  for (const s of spaces) {
-    if (!s.wcc_space_geometry) continue;
-    if (!bays.has(s.wcc_bay_id)) {
-      const [y, r] = westminsterRule(s.wcc_permit_type ?? '', s.wcc_controlled_parking_zone, s.wcc_lsg_street_name);
-      bays.set(s.wcc_bay_id, { t: 'westminster', y, r, p: [] });
-    }
-    bays.get(s.wcc_bay_id).p.push(...wktRings(s.wcc_space_geometry));
-  }
-  const unknown = [...new Set(spaces.map((s) => s.wcc_controlled_parking_zone))].filter((z) => z && !WESTMINSTER_HOURS[z]);
-  if (unknown.length) console.log(`::warning::Westminster sub-zones without hours: ${unknown.join(', ')}`);
-  return [...bays.values()];
-}
-
 // Traffic orders that aren't about parking at the kerb.
 const NOT_PARKING =
-  /closure|copenhagen|hatched|cycle|pedestrian zone|test tile|footway parking|footway bay|wheel|pavement parking|box junction|experimental orders|^off-street car park$|access marking/i;
+  /closure|copenhagen|hatched|cycle|pedestrian zone|test tile|footway parking|footway bay|wheel|pavement parking|termination marking|bus cage|islands and build|raised (?:carriageway|table)|speed hump|parklet|planters|cpz boundary|other features|bus lane|box junction|experimental orders|^off-street car park$|access marking/i;
 
 const MAX_ORDER = 1600;
 
@@ -237,11 +132,11 @@ export function parseTraffweb(gml, layer) {
   return out;
 }
 
-/** A TraffWeb restriction → a kerb element, or null when it isn't about parking. */
-export function traffwebElement(id, { props, lines, rings }) {
+/** A TraffWeb restriction → a kerb element, or null when it isn't about parking (or `skip` says so). */
+export function traffwebElement(id, { props, lines, rings }, skip) {
   const type = props.order_type ?? '';
   const text = props.restriction || type;
-  if (!text || NOT_PARKING.test(type) || NOT_PARKING.test(text)) return null;
+  if (!text || NOT_PARKING.test(type) || NOT_PARKING.test(text) || skip?.test(type)) return null;
   return { t: id, y: type, r: text, ...(lines ? { g: lines } : { p: rings }) };
 }
 
@@ -691,13 +586,13 @@ async function main(dataDir) {
     }
   };
 
-  for (const { id, tenant, zones, hours } of TRAFFWEB_SOURCES) {
+  for (const { id, tenant, zones, hours, skip } of TRAFFWEB_SOURCES) {
     await run(id, async () => {
       const found = [];
       for (const layer of ['ordersl', 'ordersr']) {
         for (const f of parseTraffweb(await get(traffwebUrl(tenant, layer, date)), layer)) {
           if (Number(f.props.order_id) > MAX_ORDER - 100) console.log(`::warning::${id} uses order type ${f.props.order_id}: raise MAX_ORDER`);
-          const el = traffwebElement(id, f);
+          const el = traffwebElement(id, f, skip);
           if (el) found.push(el);
         }
       }
@@ -732,12 +627,6 @@ async function main(dataDir) {
       }
     }
     return found;
-  });
-  await run('westminster', async () => {
-    const found = await westminsterKerb();
-    if (found.length < 1000) throw new Error(`only ${found.length} bays`);
-    elements.push(...found);
-    return found.length;
   });
   if (!elements.length) throw new Error('no council could be read');
 

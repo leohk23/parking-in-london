@@ -6,7 +6,7 @@
 // A list file is { source, updated, localities?, boundary: rings of [lat, lon], streets },
 // where streets maps a name ("Albert Road", or "Albert Road, New Malden" where
 // the council names the locality) to its zone rules:
-//   { zone, area, hours, permitOnly?, cost?, maxStay?, numbers? | section? | blocks?, unknown?, notes? }
+//   { zone, area, hours, permitOnly?, cost?, maxStay?, numbers? | section? | blocks?, unknown?, eventOnly?, notes? }
 
 import { parseSchedule } from '../schedule.js';
 import { bboxesOverlap, distance, inBbox, inPolygon } from '../geo.js';
@@ -59,6 +59,17 @@ export const STREET_LISTS = [
     link: 'https://www.ealing.gov.uk/info/201333/controlled_parking_zone_cpz',
     // Same-named roads are told apart by postcode district or town ("Church Road, W7"),
     // whose centres are in the file's `localities`.
+  },
+  {
+    id: 'richmond',
+    borough: 'Richmond',
+    district: 'Richmond upon Thames',
+    complete: true,
+    bbox: [51.4, -0.42, 51.49, -0.24],
+    url: new URL(`../../data/richmond.json${version}`, import.meta.url).href,
+    link: 'https://www.richmond.gov.uk/services/parking/cpz/cpz_times',
+    // Built from the council's address lookup, monthly (scripts/update-richmond.mjs);
+    // same-named roads are told apart by town ("York Road, Teddington").
   },
 ];
 
@@ -239,7 +250,11 @@ function streetPart(p) {
       .filter(Boolean)
       .join(' · '),
     rules: schedule ? [{ when: schedule, effect: p.permitOnly ? 'permit' : 'controlled' }] : [],
-    otherwise: schedule ? { effect: 'free' } : { effect: 'unknown', label: p.unknown ?? `Hours not recognised: ${p.hours}` },
+    otherwise: schedule
+      ? { effect: 'free' }
+      : p.eventOnly
+        ? { effect: 'free', label: 'Free except on event days: check the signs' }
+        : { effect: 'unknown', label: p.unknown ?? `Hours not recognised: ${p.hours}` },
     notes: p.notes ?? [],
   };
 }

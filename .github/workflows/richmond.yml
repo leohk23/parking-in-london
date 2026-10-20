@@ -1,0 +1,35 @@
+name: Refresh Richmond street list
+
+# Richmond publishes no zone map, only a lookup by address, so its street list
+# takes about 6,000 requests to build (scripts/update-richmond.mjs). That's too
+# many for every deploy: this runs monthly, or from Actions → Run workflow, and
+# commits the list when it has changed. The next deploy publishes it.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '41 3 2 * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: richmond
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/update-richmond.mjs
+      - name: Commit the list if it changed
+        run: |
+          git diff --quiet -- data/richmond.json && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/richmond.json
+          git commit -m "Refresh Richmond street list"
+          git push
