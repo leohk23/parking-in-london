@@ -668,6 +668,100 @@ button.info:focus-visible {
   color: var(--muted);
 }
 
+/* "About the data": each borough, the kinds of data it has, and where they come from. */
+button.link {
+  display: inline;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.chip-kind {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text);
+}
+
+.chip-kind.kerb {
+  background: color-mix(in srgb, #1d73e8 22%, transparent);
+}
+
+.chip-kind.zones {
+  background: color-mix(in srgb, #c77700 22%, transparent);
+}
+
+.chip-kind.streets {
+  background: color-mix(in srgb, #0f8a5f 22%, transparent);
+}
+
+.chip-kind.bays {
+  background: color-mix(in srgb, #8e44ad 22%, transparent);
+}
+
+.chip-kind.none {
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+  color: var(--muted);
+}
+
+.cov-kinds {
+  margin: 10px 0 6px;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.cov-note {
+  margin: 8px 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.cov-list {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+
+.cov-list li {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cov-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  font-size: 14px;
+}
+
+.cov-head strong {
+  margin-right: auto;
+}
+
+.cov-src {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.cov-list li.none strong {
+  color: var(--muted);
+}
+
 .info-notes {
   margin: 10px 0;
   padding-left: 18px;
@@ -728,7 +822,8 @@ button.info:focus-visible {
 }
 
 .leaflet-bar .map-locate,
-.leaflet-bar .map-fullscreen {
+.leaflet-bar .map-fullscreen,
+.leaflet-bar .map-about {
   display: grid;
   place-items: center;
   position: relative;
