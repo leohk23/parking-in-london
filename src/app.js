@@ -7,6 +7,7 @@ import { loadRecent, addRecent, clearRecent } from './recent.js';
 import { createCache } from './cache.js';
 import { fetchOsm } from './sources/osm.js';
 import { loadOsmTiles } from './sources/osm-tiles.js';
+import { coverageHtml } from './coverage.js';
 import { fetchCamden } from './sources/camden.js';
 import { fetchCouncilZones, outsideZones } from './sources/council-zones.js';
 import { fetchKerbside } from './sources/kerbside.js';
@@ -89,6 +90,29 @@ const FullscreenControl = L.Control.extend({
   },
 });
 new FullscreenControl().addTo(map);
+
+// Map button for what data the app has in each borough, and where it comes from.
+const ABOUT_ICON =
+  '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="7.5" r="1.3" fill="currentColor"/></svg>';
+const AboutControl = L.Control.extend({
+  options: { position: 'topleft' },
+  onAdd() {
+    const bar = L.DomUtil.create('div', 'leaflet-bar');
+    const link = L.DomUtil.create('a', 'map-about', bar);
+    link.href = '#';
+    link.setAttribute('role', 'button');
+    link.title = 'About the data';
+    link.setAttribute('aria-label', 'About the data: what each borough has');
+    link.innerHTML = ABOUT_ICON;
+    L.DomEvent.disableClickPropagation(bar);
+    L.DomEvent.on(link, 'click', (e) => {
+      L.DomEvent.preventDefault(e);
+      showCoverage();
+    });
+    return bar;
+  },
+});
+new AboutControl().addTo(map);
 syncFullscreen();
 document.addEventListener('fullscreenchange', syncFullscreen);
 document.addEventListener('keydown', (e) => e.key === 'Escape' && document.body.classList.contains('map-full') && setWindowFill(false));
@@ -141,6 +165,7 @@ $('#search').addEventListener('submit', (e) => {
   search({ query, dest: pickedPlace ?? undefined });
 });
 $('#locate').addEventListener('click', locate);
+$('#about').addEventListener('click', showCoverage);
 // "Now" shows the current time in the box and keeps it current; picking a
 // time switches it off, and the Now button (or clearing the box) brings it back.
 let arriveNow = true;
@@ -659,6 +684,22 @@ function showInfo(id) {
       o.link ? `<br /><a href="${esc(o.link)}" target="_blank" rel="noopener">Open the source page</a>` : ''
     }</p>`;
   if (!$('#info').open) $('#info').showModal();
+}
+
+/** The "About the data" box, with when the copied council data was last refreshed. */
+let kerbUpdated;
+function showCoverage() {
+  $('#info-body').innerHTML = coverageHtml({ updated: kerbUpdated });
+  if (!$('#info').open) $('#info').showModal();
+  $('#info').scrollTop = 0;
+  if (kerbUpdated) return;
+  fetch(new URL('../data/kerb/index.json', import.meta.url))
+    .then((res) => (res.ok ? res.json() : null))
+    .then((index) => {
+      kerbUpdated = index?.updated;
+      if (kerbUpdated && $('#info').open && $('#info-title')?.textContent === 'About the data') $('#info-body').innerHTML = coverageHtml({ updated: kerbUpdated });
+    })
+    .catch(() => {});
 }
 
 const VIA_LABELS = { prebuilt: 'prebuilt copy', saved: 'saved on this phone', live: 'live servers' };
