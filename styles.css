@@ -986,7 +986,8 @@ body.map-full #map {
 }
 
 .suggestion .remove {
-  margin-left: auto;
+  /* Centred on the address's first line, with the tap area spilling into the row's padding. */
+  margin: -4.5px -6px -4.5px auto;
   flex: none;
   min-height: 0;
   width: 28px;
