@@ -1,5 +1,5 @@
 // The dropdown above the destination box. Tapping the box, or typing fewer
-// than 3 characters, lists recent searches; after that, suggestions appear
+// than 3 characters, lists saved places and recent searches; after that, suggestions appear
 // 300 ms after typing stops. Arrow keys move, Enter picks, Escape closes. Picking calls onPick
 // with { label, point, street }.
 
@@ -7,11 +7,16 @@ import { fetchSuggestions } from './suggest.js';
 
 const PIN_ICON =
   '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 22s7-6.2 7-12a7 7 0 1 0-14 0c0 5.8 7 12 7 12z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="2.5" fill="currentColor"/></svg>';
+const STAR_ICON =
+  '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" fill="currentColor"/></svg>';
 const CLOCK_ICON =
   '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 
-/** `recent` is { load(), clear() } for the recent-searches list. */
-export function attachSuggestions(input, list, { onPick, recent, fetchImpl, delayMs = 300 } = {}) {
+/**
+ * `recent` is { load(), clear() } for the recent-searches list, `saved` is
+ * { load(), remove(label) } for saved places, and `onSavedChange` is told when one is removed here.
+ */
+export function attachSuggestions(input, list, { onPick, recent, saved, onSavedChange, fetchImpl, delayMs = 300 } = {}) {
   let items = [];
   let showingRecent = false;
   let active = -1;
@@ -42,22 +47,31 @@ export function attachSuggestions(input, list, { onPick, recent, fetchImpl, dela
     if (!items.length) {
       return show('<li class="suggestion-note">No suggestions found. Can\'t find it? Long-press the map to drop a pin.</li>');
     }
-    const icon = showingRecent ? CLOCK_ICON : PIN_ICON;
+    const option = (item, i) =>
+      `<li id="${list.id}-${i}" role="option" class="suggestion${item.saved ? ' saved' : ''}${i === active ? ' active' : ''}" aria-selected="${i === active}" data-index="${i}">${
+        item.saved ? STAR_ICON : showingRecent ? CLOCK_ICON : PIN_ICON
+      }<span>${escapeHtml(item.label)}</span>${
+        item.saved ? `<button type="button" class="remove" data-remove="${i}" aria-label="Remove ${escapeHtml(item.label)} from saved places" title="Remove from saved">✕</button>` : ''
+      }</li>`;
+    if (!showingRecent) return show(items.map(option).join(''));
+    const savedCount = items.filter((item) => item.saved).length;
+    const heading = (text) => `<li class="suggestion-heading" role="presentation">${text}</li>`;
     show(
-      (showingRecent ? '<li class="suggestion-heading" role="presentation">Recent</li>' : '') +
-        items
-          .map(
-            (item, i) =>
-              `<li id="${list.id}-${i}" role="option" class="suggestion${i === active ? ' active' : ''}" aria-selected="${i === active}" data-index="${i}">${icon}<span>${escapeHtml(item.label)}</span></li>`,
-          )
-          .join('') +
-        (showingRecent ? '<li class="suggestion-clear" role="presentation"><button type="button" data-action="clear">Clear recent searches</button></li>' : ''),
+      (savedCount ? heading('Saved') + items.slice(0, savedCount).map(option).join('') : '') +
+        (items.length > savedCount
+          ? heading('Recent') +
+            items.slice(savedCount).map((item, i) => option(item, i + savedCount)).join('') +
+            '<li class="suggestion-clear" role="presentation"><button type="button" data-action="clear">Clear recent searches</button></li>'
+          : ''),
     );
     if (active >= 0) input.setAttribute('aria-activedescendant', `${list.id}-${active}`);
   };
 
+  // Saved places first, then recent searches that aren't saved too.
   const showRecent = () => {
-    items = recent?.load() ?? [];
+    const kept = (saved?.load() ?? []).map((p) => ({ ...p, saved: true }));
+    const names = new Set(kept.map((p) => p.label.trim().toLowerCase()));
+    items = [...kept, ...(recent?.load() ?? []).filter((p) => !names.has(p.label.trim().toLowerCase()))];
     showingRecent = true;
     active = -1;
     if (items.length) renderItems();
@@ -133,8 +147,14 @@ export function attachSuggestions(input, list, { onPick, recent, fetchImpl, dela
     if (e.target.closest('[data-action="clear"]')) {
       e.preventDefault();
       recent?.clear();
-      items = [];
-      return close();
+      return showRecent();
+    }
+    const remove = e.target.closest('[data-remove]');
+    if (remove) {
+      e.preventDefault();
+      saved?.remove(items[Number(remove.dataset.remove)].label);
+      onSavedChange?.();
+      return showRecent();
     }
     const option = e.target.closest('[data-index]');
     if (!option) return;
