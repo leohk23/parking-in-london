@@ -175,6 +175,11 @@ for (const type of ['input', 'change']) {
 }
 setInterval(showNowTime, 30000);
 document.addEventListener('visibilitychange', showNowTime);
+$('#status').addEventListener('click', (e) => {
+  const action = e.target.closest('[data-action]')?.dataset.action;
+  if (action === 'details') showCoverage();
+  if (action === 'refresh' && current) search({ dest: current.dest });
+});
 $('#freeOnly').addEventListener('change', render);
 // A smaller radius than the last search only filters and zooms; a bigger one searches again.
 $('#radius').addEventListener('change', () => {
@@ -458,7 +463,7 @@ async function search({ query, dest }) {
       { name: 'Camden bay data', key: 'camden', load: fetchCamden(area) },
     ];
     const waiting = new Set(sources.map((src) => src.name));
-    current = { dest, radius, options: [], clock, sourceNotes: [], loading: true, timings: [], lookupMs };
+    current = { dest, radius, options: [], clock, isNow, searchedAt: Date.now(), sourceNotes: [], loading: true, timings: [], lookupMs };
     showProgress('Loading parking data…');
     render();
 
@@ -512,10 +517,15 @@ function render() {
   if (isBankHoliday(clock.date)) {
     warnings.push("It's a bank holiday. Many zones don't operate today, but some do. Check the signs.");
   }
-  // Where and when are already in the boxes above, so the summary is just the counts.
+  // Where and when are already in the boxes above, so the summary is just the counts;
+  // how long it took and how fresh the data is are a tap away.
+  current.staleShown = isStale(current);
   showStatus(
     `${counts.free ?? 0} free · ${counts.paid ?? 0} paid · ${counts.no ?? 0} not allowed · ${counts.unknown ?? 0} to check` +
-      (current.loading ? '' : timingHtml(current)) +
+      (current.loading ? '' : `<button type="button" class="link checked" data-action="details">Checked at ${clockTime(current.searchedAt)} · details</button>`) +
+      (current.staleShown
+        ? `<span class="warn stale">These results are for ${clockTime(current.searchedAt)}, when you searched. <button type="button" class="link" data-action="refresh">Update to now</button></span>`
+        : '') +
       warnings.map((w) => `<span class="warn">${esc(w)}</span>`).join(''),
   );
   $('.controls').hidden = false;
@@ -686,35 +696,52 @@ function showInfo(id) {
   if (!$('#info').open) $('#info').showModal();
 }
 
-/** The "About the data" box, with when the copied council data was last refreshed. */
-let kerbUpdated;
+/**
+ * The "About the data" box: this search (when, how long), when the copied
+ * data was last refreshed, and what each borough has.
+ */
+const updatedDates = {};
 function showCoverage() {
-  $('#info-body').innerHTML = coverageHtml({ updated: kerbUpdated });
+  const fill = () => {
+    const search = current && !current.loading ? { checkedAt: clockTime(current.searchedAt), isNow: current.isNow, timing: timingText(current) } : null;
+    $('#info-body').innerHTML = coverageHtml({ ...updatedDates, search });
+  };
+  fill();
   if (!$('#info').open) $('#info').showModal();
   $('#info').scrollTop = 0;
-  if (kerbUpdated) return;
-  fetch(new URL('../data/kerb/index.json', import.meta.url))
-    .then((res) => (res.ok ? res.json() : null))
-    .then((index) => {
-      kerbUpdated = index?.updated;
-      if (kerbUpdated && $('#info').open && $('#info-title')?.textContent === 'About the data') $('#info-body').innerHTML = coverageHtml({ updated: kerbUpdated });
-    })
-    .catch(() => {});
+  for (const [key, path] of [['updated', '../data/kerb/index.json'], ['osmUpdated', '../data/osm/index.json']]) {
+    if (updatedDates[key]) continue;
+    fetch(new URL(path, import.meta.url))
+      .then((res) => (res.ok ? res.json() : null))
+      .then((index) => {
+        if (!index?.updated) return;
+        updatedDates[key] = index.updated;
+        if ($('#info').open && $('#info-title')?.textContent === 'About the data') fill();
+      })
+      .catch(() => {});
+  }
 }
 
 const VIA_LABELS = { prebuilt: 'prebuilt copy', saved: 'saved on this phone', live: 'live servers' };
 const seconds = (ms) => `${(ms / 1000).toFixed(1)} s`;
 
 /** "Loaded in 1.2 s: OpenStreetMap 0.3 s (prebuilt copy) · zone map 0.8 s", so slow sources are easy to spot. */
-function timingHtml({ timings, lookupMs }) {
+function timingText({ timings, lookupMs }) {
   if (!timings.length) return '';
   const total = Math.max(...timings.map((t) => t.ms)) + lookupMs;
   const parts = [
     ...(lookupMs > 50 ? [`place lookup ${seconds(lookupMs)}`] : []),
     ...[...timings].sort((a, b) => b.ms - a.ms).map((t) => `${t.name.replace(/^the council's /, '')} ${seconds(t.ms)}${t.via ? ` (${VIA_LABELS[t.via]})` : ''}`),
   ];
-  return `<span class="timing">Loaded in ${seconds(total)}: ${esc(parts.join(' · '))}</span>`;
+  return `Loaded in ${seconds(total)}: ${parts.join(' · ')}`;
 }
+
+/** "14:05" in the device's time. */
+const clockTime = (ms) => new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+// Results for "now" go out of date while the page sits open: after this long, say so.
+const STALE_AFTER = 10 * 60 * 1000;
+const isStale = (c) => Boolean(c && !c.loading && c.isNow && Date.now() - c.searchedAt > STALE_AFTER);
 
 function showStatus(html) {
   $('#status').innerHTML = html;
@@ -742,6 +769,8 @@ function setArriveNow(now) {
 
 function showNowTime() {
   if (arriveNow) $('#arrive').value = localInputValue(new Date());
+  // Also when you come back to the page: say if the results have gone out of date.
+  if (current && isStale(current) !== current.staleShown) render();
 }
 
 /** The "YYYY-MM-DDTHH:MM" a datetime-local input expects, in the device's time zone. */

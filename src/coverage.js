@@ -53,8 +53,12 @@ export const KINDS = {
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-/** The box's HTML; `updated` is when the copied kerbside data was last refreshed, if known. */
-export function coverageHtml({ updated } = {}) {
+/**
+ * The box's HTML. `updated` and `osmUpdated` are when the copied council data
+ * and OpenStreetMap tiles were last refreshed; `search` is the last search's
+ * { checkedAt, isNow, timing }; each shown when known.
+ */
+export function coverageHtml({ updated, osmUpdated, search } = {}) {
   const covered = COVERAGE.filter(([, kinds]) => kinds.length).length;
   const rows = COVERAGE.map(([name, kinds, from, how]) => {
     const chips = kinds.map((k) => `<span class="chip-kind ${k}">${KINDS[k][0]}</span>`).join('');
@@ -63,14 +67,22 @@ export function coverageHtml({ updated } = {}) {
       <div class="cov-src">${esc(from)}${how ? ` · ${esc(how)}` : ''}</div>
     </li>`;
   }).join('');
+  const thisSearch = search
+    ? `<div class="cov-search"><strong>This search</strong> was checked at ${esc(search.checkedAt)}${search.isNow ? ', for parking then' : ''}.${
+        search.timing ? `<br /><span class="cov-timing">${esc(search.timing)}</span>` : ''
+      }</div>`
+    : '';
+  const dates = [updated && `council copies ${esc(updated)}`, osmUpdated && `OpenStreetMap ${esc(osmUpdated)}`].filter(Boolean);
   return `
     <h2 id="info-title">About the data</h2>
     <p class="info-sub">Council parking data for ${covered} of London's ${COVERAGE.length} areas.</p>
+    ${thisSearch}
+    ${dates.length ? `<p class="cov-dates">Data last refreshed: ${dates.join(' · ')}.</p>` : ''}
     <ul class="cov-kinds">${Object.entries(KINDS)
       .map(([kind, [label, what]]) => `<li><span class="chip-kind ${kind}">${label}</span> ${esc(what)}</li>`)
       .join('')}</ul>
     <p class="cov-note">Everywhere: car parks and street parking mapped on OpenStreetMap, refreshed weekly.
-      Where a council's server doesn't allow browsers, its data is copied onto this site${updated ? `; last copied ${esc(updated)}` : ''}.</p>
+      Where a council's server doesn't allow browsers, its data is copied onto this site.</p>
     <ul class="cov-list">${rows}</ul>
     <p class="info-src">Always check the signs on the street: they override anything shown here.</p>`;
 }

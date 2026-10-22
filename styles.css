@@ -455,12 +455,6 @@ button.busy::after,
   margin-bottom: 8px;
 }
 
-.status .timing {
-  display: block;
-  margin-top: 2px;
-  font-size: 12px;
-}
-
 .status .warn {
   display: block;
   margin-top: 6px;
@@ -960,4 +954,23 @@ body.map-full #map {
   z-index: 2000;
   height: 100vh;
   height: 100dvh;
+}
+
+/* "Checked at 14:05 · details" under the counts, and the "This search" part of the About box. */
+.status .checked {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.cov-search,
+.cov-dates {
+  margin: 10px 0 0;
+  font-size: 13px;
+}
+
+.cov-timing {
+  color: var(--muted);
+  font-size: 12px;
 }
