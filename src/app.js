@@ -4,6 +4,7 @@
 import { geocode, reverseGeocode, councilAt } from './geocode.js';
 import { attachSuggestions } from './autocomplete.js';
 import { loadRecent, addRecent, clearRecent } from './recent.js';
+import { loadSaved, isSaved, savePlace, removeSaved } from './saved.js';
 import { createCache } from './cache.js';
 import { fetchOsm } from './sources/osm.js';
 import { loadOsmTiles } from './sources/osm-tiles.js';
@@ -152,6 +153,8 @@ const osmCache = createCache('osm', { maxAgeMs: 7 * 24 * 3600 * 1000, maxEntries
 let pickedPlace = null;
 attachSuggestions($('#q'), $('#suggestions'), {
   recent: { load: () => loadRecent(), clear: () => clearRecent() },
+  saved: { load: () => loadSaved(), remove: (label) => removeSaved(label) },
+  onSavedChange: () => showSaveButton(),
   onPick: (place) => {
     pickedPlace = place;
     search({ query: place.label, dest: place });
@@ -165,6 +168,7 @@ $('#search').addEventListener('submit', (e) => {
   search({ query, dest: pickedPlace ?? undefined });
 });
 $('#locate').addEventListener('click', locate);
+$('#save').addEventListener('click', toggleSaved);
 $('#about').addEventListener('click', showCoverage);
 // "Now" shows the current time in the box and keeps it current; picking a
 // time switches it off, and the Now button (or clearing the box) brings it back.
@@ -422,6 +426,8 @@ async function search({ query, dest }) {
     if (!isLatest()) return;
     saveToUrl(query ?? $('#q').value);
     if (dest.label !== 'Your location' && dest.label !== 'Dropped pin') addRecent(dest);
+    savable = savablePlace(dest);
+    showSaveButton();
     pinLayer.clearLayers();
 
     const area = bboxAround(dest.point, radius);
@@ -753,6 +759,35 @@ function showProgress(message, kind = '') {
   el.className = `progress ${kind}`;
   el.textContent = message ?? '';
   if (message && kind !== 'error') el.insertAdjacentHTML('afterbegin', '<span class="spinner" aria-hidden="true"></span>');
+}
+
+// The ☆ in the search bar saves the place just searched (not "Your location",
+// which moves); saved places are listed first when you tap the search box.
+let savable = null;
+
+/** The place to save for a destination: a dropped pin with no address gets its coordinates as a name. */
+function savablePlace(dest) {
+  if (dest.label === 'Your location') return null;
+  const label = dest.label === 'Dropped pin' ? `Pin at ${dest.point.map((n) => n.toFixed(4)).join(', ')}` : dest.label;
+  return { label, point: dest.point, street: dest.street ?? null };
+}
+
+function showSaveButton() {
+  const btn = $('#save');
+  btn.hidden = !savable;
+  if (!savable) return;
+  const saved = isSaved(savable);
+  btn.textContent = saved ? '★' : '☆';
+  btn.setAttribute('aria-pressed', String(saved));
+  btn.title = saved ? 'Remove from saved places' : 'Save this place';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+function toggleSaved() {
+  if (!savable) return;
+  if (isSaved(savable)) removeSaved(savable.label);
+  else if (!savePlace(savable)) showProgress("Couldn't save: this browser isn't keeping data for this site.", 'error');
+  showSaveButton();
 }
 
 function setBusy(busy) {

@@ -974,3 +974,31 @@ body.map-full #map {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* The search bar's save star: gold once saved. */
+#save[aria-pressed='true'] {
+  color: #d99400;
+}
+
+/* Saved places in the dropdown: a gold star, and ✕ to remove one. */
+.suggestion.saved svg {
+  color: #d99400;
+}
+
+.suggestion .remove {
+  margin-left: auto;
+  flex: none;
+  min-height: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.suggestion .remove:hover {
+  background: color-mix(in srgb, var(--muted) 15%, transparent);
+}

@@ -51,7 +51,7 @@ OpenStreetMap's live Overpass servers can be slow when busy, so the deploy workf
 
 Under the counts, each search shows how long it took and how long each source took, so a slow source is easy to spot; a result's ⓘ box says how its data was loaded. The site also keeps its own files in an offline cache (`sw.js`), so it opens instantly on repeat visits and on a weak signal.
 
-Recent destinations (the last six) are kept in the browser too, and shown when you tap the empty search box.
+Recent destinations (the last six) are kept in the browser too, and shown when you tap the search box. Places you save with the ☆ in the search bar (`src/saved.js`) are listed above them until you remove them (✕ in the list, or tap ★ again); they stay on that device and browser only.
 
 If the suggestions don't have your place, long-press the map (right-click on a computer) to drop a pin, then tap **Find parking here**. After a search you can also drag the destination pin to fine-tune it, and the search runs again from where you drop it.
 
