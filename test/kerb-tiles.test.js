@@ -203,8 +203,85 @@ test("Lewisham's two-part hours and Greenwich's labels", async () => {
   });
   assert.equal(greenwichZone(feature('EX-HATCH-PERMIT-ELIGIBLE-CPZ-LB BEXLEY-ABBEY WOOD-AW', 'AW*', 'MON-FRI_11am-1pm')), null);
   assert.equal(greenwichZone(feature('Exempt')), null);
+  // The same fields, cut to ten letters.
+  const short = { properties: { CPZ: 'EX-HATCH-PERMIT-ELIGIBLE-CPZ-CHARLTON-C', CPZ_eligbi: 'Charlton', CPZ_elig_1: 'C', CPZ_elig_2: 'MON-SAT_9am-6.30pm' }, geometry };
+  assert.deepEqual(greenwichZone(short).properties, { zone: 'C', area: 'Charlton', hours: 'MON-SAT 9am-6.30pm' });
+});
+
+test("Hillingdon's schemes, without the map's test shapes", async () => {
+  const { hillingdonZone } = await import('../src/sources/council-zones.js');
+  assert.deepEqual(hillingdonZone({ Name: 'Hayes Parking Management Scheme Zone HY2', Type: 'Resident Permit Bays only', Times: '9am to 5pm - Mon to Fri', Label_2: 'Hayes - Keith Road', Zones: 'HY2' }), {
+    zone: 'HY2', title: undefined, area: 'Hayes - Keith Road', hours: '9am to 5pm - Mon to Fri', permitOnly: true, unknown: 'Hours are on the signs at the entry to the zone',
+  });
+  const town = hillingdonZone({ Name: 'Hayes Town Scheme', Type: 'Pay and Display', Label_2: 'Hayes Town', Zones: 'TOWN CENTRE SCHEME' });
+  assert.equal(town.title, 'Hayes Town Scheme');
+  assert.equal(town.unknown, 'Pay and display: hours are on the signs');
+  assert.equal(hillingdonZone({ Name: 'Hillingdon Hill Stop & Shop Parking Scheme', Type: 'Pay and Display', Times: '8am to 6am - Mon to Sat Max stay 2 hours', Zones: 'STOP AND SHOP' }).hours, '8am to 6pm - Mon to Sat Max stay 2 hours');
+  assert.equal(hillingdonZone({ Name: 'y2', Type: 'resident' }), null);
+  assert.equal(hillingdonZone({ Name: 'X1 Zone test', Times: '9am to 5pm - Mon to Sat', Zones: 'X1' }), null);
+  assert.equal(hillingdonZone({ Zones: 'test' }), null);
+});
+
+test("Southwark's hours, rules and zones", async () => {
+  const { southwarkHours, southwarkElements, southwarkZone } = await import('../scripts/build-kerb-tiles.mjs');
+  assert.equal(southwarkHours('Mon-Fri 08:00-18:30 Sat 09:30-12:30 MaxStay: 2h NoReturn: 30m'), 'Mon-Fri 8am-6.30pm, Sat 9.30am-12.30pm (max stay 2 hours, no return within 30 minutes)');
+  assert.equal(southwarkHours('00:00-00:00'), 'at any time');
+  assert.equal(southwarkHours('00:00-08:00 18:30-00:00'), 'Mon-Sun 12am-8am and 6.30pm-12am');
+  assert.equal(southwarkHours('Mon-Sat 08:30-18:30 MaxStay: 1h'), 'Mon-Sat 8.30am-6.30pm (max stay 1 hour)');
+
+  const geometry = { type: 'MultiPolygon', coordinates: [[[[-0.09, 51.49], [-0.091, 51.49], [-0.09, 51.491], [-0.09, 51.49]]]] };
+  const rules = (hours) => southwarkElements({ Operating_hours: hours }, geometry).map((el) => [el.y, el.r]);
+  // A shared bay is one rule; the loading ban on a yellow line goes with the line.
+  assert.deepEqual(rules('PB Standard days: Mon-Fri 08:30-18:30 MaxStay: 4h, PEB Standard days: Mon-Fri 08:30-18:30'), [['Shared use bay', 'Pay or permit holders Mon-Fri 8.30am-6.30pm (max stay 4 hours)']]);
+  assert.deepEqual(rules('DYL Standard days: 00:00-00:00, SYKM Standard days: 07:00-10:00 16:00-19:00'), [['Double yellow line', 'No waiting at any time']]);
+  assert.deepEqual(rules('PEB Standard days: Mon-Fri 08:30-18:30'), [['Permit bay', 'Permit holders only Mon-Fri 8.30am-6.30pm']]);
+  const [bay] = southwarkElements({ Operating_hours: 'FB Standard days: Mon-Fri 08:30-18:30 MaxStay: 30m NoReturn: 2h' }, geometry);
+  assert.deepEqual(bay.p[0][0], [51.49, -0.09]);
+  assert.equal(summary(bay.r, bay.y), 'Free for up to 30 minutes until 18:30, then free');
+  assert.equal(summary('Pay or permit holders Mon-Fri 8.30am-6.30pm (max stay 4 hours)', 'Shared use bay'), 'Pay to park until 18:30, then free');
+
+  const c1 = southwarkZone({ Zone: 'C1', Zone_name: 'Bankside (C1)', Days_of_operation: 'Mon - Fri, Sat', Hours_of_operation: '0800 - 1830, 0930 - 1230' }, geometry);
+  // The council's page wins for Bankside, where the map has its pay bays' hours.
+  assert.equal(c1.properties.hours, 'Mon-Sun 8am-11pm');
+  const g = southwarkZone({ Zone: 'G', Zone_name: 'Bermondsey (G)', Days_of_operation: 'Mon - Sun', Hours_of_operation: '0830 - 2300' }, geometry);
+  assert.deepEqual(g.properties, { zone: 'G', area: 'Bermondsey', hours: 'Mon-Sun 8.30am-11pm' });
+  const clink = southwarkZone({ Zone: '', Zone_name: 'RPZ Clink Street', Days_of_operation: 'Mon - Sun', Hours_of_operation: 'At all times' }, geometry);
+  assert.deepEqual(clink.properties, { title: 'RPZ Clink Street', hours: 'Mon-Sun at any time' });
+  assert.equal(southwarkZone({ Zone: 'PR', Zone_name: 'Peckham Road South (PR)', Days_of_operation: 'Mon_Fri', Hours_of_operation: '0830 - 1830' }, geometry).properties.hours, 'Mon-Fri 8.30am-6.30pm');
 });
 
 test("a bay code like TH-0106 isn't read as Thursday", () => {
   assert.equal(summary('Car Club Permit Holders Only TH-0106', 'Car Club Parking Place'), 'Car club vehicles only');
+});
+
+test("Havering's traffic orders: static restrictions in force, in GPS coordinates", async () => {
+  const { haveringElement } = await import('../scripts/build-kerb-tiles.mjs');
+  const record = (fields) => ({
+    MI_PRINX: 1, KIND: 'Static', DATE_FROM: '2018-10-12T00:00:00', RESTRICTION_TYPE: 'Residents Parking',
+    RESTRICTION: 'Resident permit holders only (Zone_RO3) Mon-Sat 8.30am-6.30pm',
+    GEOMETRY: JSON.stringify({ type: 'LineString', coordinates: [[551655.75, 187953.9], [551684.17, 187965.0]] }),
+    ...fields,
+  });
+  const now = new Date('2026-10-23');
+  const bay = haveringElement(record(), now);
+  assert.deepEqual([bay.t, bay.y, bay.g[0].length], ['havering', 'Residents Parking', 2]);
+  assert.ok(Math.abs(bay.g[0][0][0] - 51.576) < 0.01 && Math.abs(bay.g[0][0][1] - 0.183) < 0.01, JSON.stringify(bay.g[0][0]));
+  assert.equal(summary(bay.r, bay.y), 'Permit holders only until 18:30, then free');
+  assert.equal(haveringElement(record({ KIND: 'Inventory' }), now), null);
+  assert.equal(haveringElement(record({ DATE_FROM: '2027-01-01T00:00:00' }), now), null);
+  assert.equal(haveringElement(record({ RESTRICTION_TYPE: '2 Wheel Parking', RESTRICTION: '2 Wheel Parking' }), now), null);
+  const area = haveringElement(record({ RESTRICTION_TYPE: 'Permit Parking Area', GEOMETRY: JSON.stringify({ type: 'Polygon', coordinates: [[[551600, 187900], [551700, 187900], [551700, 188000], [551600, 187900]]] }) }), now);
+  assert.equal(area.p[0].length, 4);
+});
+
+test('City of London restrictions, by map layer', async () => {
+  const { cityRestriction } = await import('../src/sources/kerbside.js');
+  const sat = 'Monday to Friday, 7am to 7pm and Saturday, 7am to 11am except Christmas Day, Good Friday or a Bank Holiday';
+  const at = (p, layer) => { const { type, text } = cityRestriction(p, layer); return summary(text, type); };
+  assert.equal(at({ HOURS: 'At any time' }, 52), 'No parking');
+  assert.equal(at({ HOURS: sat }, 52), 'No parking until 19:00, then free');
+  assert.equal(at({ HOURS: 'Monday to Sunday, 10pm to 7am' }, 51), 'Free until 22:00, then no parking');
+  assert.equal(at({ PRESCRIBED_HOURS: sat, CHARGE_HOURS: sat.replace(/7am to 7pm/, '8am to 7pm'), MAXIMUM_STAY: '4 Hours' }, 69), 'Pay to park until 19:00, then free');
+  assert.equal(at({ PRESCRIBED_HOURS: '7 a.m. - 7 p.m. Mon-Fri 7 a.m. - 11 a.m. Sat except Christmas Day' }, 70), 'Taxis only until 19:00, then free');
+  assert.equal(at({ PRESCRIBED_HOURS: 'At any time' }, 72), 'Blue Badge holders only');
 });

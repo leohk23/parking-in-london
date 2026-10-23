@@ -1,6 +1,6 @@
 // What the app knows about each of London's 33 areas, for the "About the data"
 // box behind the map's ⓘ button. Keep it in step with the sources: council-zones.js,
-// kerbside.js, street-lists.js, camden.js and scripts/build-kerb-tiles.mjs.
+// kerbside.js, street-lists.js, camden.js, bromley.js and scripts/build-kerb-tiles.mjs.
 
 // How each kind of data is kept up to date.
 const LIVE = 'Live from the council when you search';
@@ -13,9 +13,9 @@ export const COVERAGE = [
   ['Barnet', ['kerb'], 'TraffWeb traffic orders', COPIED],
   ['Bexley', ['kerb', 'zones'], "TraffWeb, with hours from the council's permits page", COPIED],
   ['Brent', ['zones'], "The council's zone map, with hours from its zone table", COPIED],
-  ['Bromley', [], 'Nothing usable published yet'],
+  ['Bromley', ['lookup'], "The council's zone lookup, for the spot you search: it publishes no zone map", LIVE],
   ['Camden', ['bays', 'kerb'], 'Bays from Camden open data, with tariffs (live); lines from TraffWeb', COPIED],
-  ['City of London', [], 'Only car parks published'],
+  ['City of London', ['zones', 'kerb'], "The City's map of lines and bays", LIVE],
   ['Croydon', ['kerb'], 'TraffWeb traffic orders', COPIED],
   ['Ealing', ['streets'], "The council's 61 zone pages", COPIED],
   ['Enfield', ['kerb', 'zones'], 'TraffWeb traffic orders', COPIED],
@@ -24,8 +24,8 @@ export const COVERAGE = [
   ['Hammersmith & Fulham', ['zones', 'kerb'], "Zones from the council's map (live); lines and bays from TraffWeb", COPIED],
   ['Haringey', ['zones'], "The council's zone map", COPIED],
   ['Harrow', ['kerb', 'zones'], "The council's map of lines, bays and zones", COPIED],
-  ['Havering', [], 'Nothing usable published yet'],
-  ['Hillingdon', [], 'Nothing usable published yet'],
+  ['Havering', ['kerb'], "The council's traffic order map (StatMap)", COPIED],
+  ['Hillingdon', ['zones'], "The council's 2013 map of its parking schemes, which may miss newer ones", LIVE],
   ['Hounslow', ['kerb'], 'TraffWeb traffic orders', COPIED],
   ['Islington', ['zones'], "The council's zone map", COPIED],
   ['Kensington & Chelsea', ['zones', 'kerb'], "Zones and residents' bay hours from the council's map (live); lines and bays from TraffWeb", COPIED],
@@ -36,7 +36,7 @@ export const COVERAGE = [
   ['Newham', ['zones'], "The council's zone map, which may miss newer zones", LIVE],
   ['Redbridge', ['kerb'], 'TraffWeb traffic orders', COPIED],
   ['Richmond', ['streets'], "The council's address lookup, at both ends of every street", MONTHLY],
-  ['Southwark', [], 'Nothing usable published yet'],
+  ['Southwark', ['kerb', 'zones'], "The council's map of lines, bays and zones", COPIED],
   ['Sutton', ['zones', 'kerb'], "The council's map of zones, lines and bays", LIVE],
   ['Tower Hamlets', ['kerb'], 'TraffWeb traffic orders', COPIED],
   ['Waltham Forest', ['kerb'], 'TraffWeb traffic orders', COPIED],
@@ -49,6 +49,7 @@ export const KINDS = {
   zones: ['Zones', 'Parking zone outlines and their hours'],
   streets: ['Street list', "Each street's zone and hours, drawn along the street"],
   bays: ['Bays', 'Every bay, with its times and tariff'],
+  lookup: ['Zone lookup', 'The zone and its hours at the spot you search, without an outline'],
 };
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);

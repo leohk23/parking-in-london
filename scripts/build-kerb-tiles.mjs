@@ -9,11 +9,12 @@
 // week, and keeps its committed zone map.
 //
 // Sources: councils' TraffWeb traffic order maps (GML in British National
-// Grid), and Harrow's ArcGIS map server.
+// Grid), Harrow's ArcGIS map server, Havering's StatMap TRO map and Southwark's
+// Spectrum Spatial map.
 
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { osgbToWgs84 } from './osgb.mjs';
+import { osgbToWgs84 } from '../src/osgb.js';
 import { STEP, tileKey } from './build-osm-tiles.mjs';
 import { parseSchedule } from '../src/schedule.js';
 
@@ -193,6 +194,216 @@ function shape(geometry) {
     default:
       return null;
   }
+}
+
+// Havering's traffic orders are on its StatMap TRO map (havering.statmap.co.uk/tro),
+// which wants a session: log in as its public user, open the map, then ask for
+// the restrictions in force in boxes covering the borough. Only that read-only
+// function is called.
+const HAVERING_TRO = 'https://havering.statmap.co.uk/tro/SMJobs.svc/Earthlight/';
+// The borough in British National Grid, and the size of each box asked for.
+const HAVERING_GRID = { x: [548000, 562000], y: [178400, 195000], step: 3500 };
+
+async function haveringKerb(now = new Date()) {
+  let session = null;
+  const post = async (op, job) => {
+    for (let i = 1; ; i++) {
+      try {
+        const res = await fetch(`${HAVERING_TRO}${op}?id=${session ?? ''}`, {
+          method: 'POST',
+          // It answers "Request Error" to application/json.
+          headers: { 'Content-Type': 'text/plain', 'User-Agent': 'parking-in-london (github.com/leohk23/parking-in-london)' },
+          body: JSON.stringify({ ...job, SessionId: session }),
+          signal: AbortSignal.timeout(300_000),
+        });
+        if (!res.ok) throw new Error(`${res.status} from ${op}`);
+        return JSON.parse((await res.text()).replace(/^﻿/, ''));
+      } catch (err) {
+        if (i >= 5) throw err;
+        await new Promise((r) => setTimeout(r, 3000 * i));
+      }
+    }
+  };
+  // Jobs that take a while finish later: poll for them.
+  const run = async (op, job) => {
+    let status = await post(op, job);
+    const started = Date.now();
+    while (!status.IsFinished) {
+      if (Date.now() - started > 900_000) throw new Error(`${op} took too long`);
+      await new Promise((r) => setTimeout(r, 500));
+      const { Result } = await post('ManageJobs', { Action: 0, JobIds: [] });
+      status = Result.Statuses.find((s) => s.JobId === status.JobId) ?? status;
+    }
+    if (status.Error) throw new Error(JSON.stringify(status.Error).slice(0, 300));
+    return status.Result;
+  };
+  session = (await post('RequestSessionJob', { UserName: 'tro_public', Password: null, DecryptCredentials: false })).Result.SessionInfo.SessionId;
+  await run('OpenMapJob', { MapFileName: '\\TRO DataDirectory\\Traffic Regulation Orders.Map$' });
+  const records = new Map();
+  const { x, y, step } = HAVERING_GRID;
+  for (let y0 = y[0]; y0 < y[1]; y0 += step) {
+    for (let x0 = x[0]; x0 < x[1]; x0 += step) {
+      const box = JSON.stringify({ p1: { x: x0, y: y0 }, p2: { x: x0 + step, y: y0 + step } });
+      const result = await run('RunServerScriptFunctionJob', { FunctionName: 'getCurrentAndFutureRestrictions', Arguments: [box] });
+      for (const r of JSON.parse(result.Result)[0]) records.set(r.MI_PRINX, r);
+    }
+  }
+  return [...records.values()].map((r) => haveringElement(r, now)).filter(Boolean);
+}
+
+/**
+ * A Havering TRO record → a kerb element, or null for sign plates and survey
+ * points ("Inventory"), moving-traffic orders, orders not yet in force, and
+ * restrictions that aren't about parking.
+ */
+export function haveringElement(r, now = new Date()) {
+  if (r.KIND !== 'Static') return null;
+  if (r.DATE_FROM && new Date(r.DATE_FROM) > now) return null;
+  const type = r.RESTRICTION_TYPE ?? '';
+  const text = r.RESTRICTION || type;
+  if (!text || NOT_PARKING.test(type) || NOT_PARKING.test(text)) return null;
+  const geometry = JSON.parse(r.GEOMETRY ?? 'null');
+  const toLatLon = (line) => line.map(([e, n]) => osgbToWgs84(e, n).map(round));
+  switch (geometry?.type) {
+    case 'LineString':
+      return { t: 'havering', y: type, r: text, g: [toLatLon(geometry.coordinates)] };
+    case 'MultiLineString':
+      return { t: 'havering', y: type, r: text, g: geometry.coordinates.map(toLatLon) };
+    case 'Polygon':
+      return { t: 'havering', y: type, r: text, p: geometry.coordinates.map(toLatLon) };
+    case 'MultiPolygon':
+      return { t: 'havering', y: type, r: text, p: geometry.coordinates.flat().map(toLatLon) };
+    default:
+      return null;
+  }
+}
+
+// Southwark's map (geomap.southwark.gov.uk) answers SQL through its Spectrum
+// Spatial proxy: a table of each kind of restriction ("TROs - Paid Bay"), and
+// one of the zones. Bays and lines are drawn as outlines.
+const SOUTHWARK = 'https://geomap.southwark.gov.uk/connect/analyst/controller/connectProxy/rest/Spatial/FeatureService?url=';
+const southwarkGet = (path) => get(`${SOUTHWARK}${encodeURIComponent(path)}`, { as: 'json' });
+// Cycle stands, hire bays and bus stop poles aren't kerb anyone can park at.
+const SOUTHWARK_SKIP = /cycle|scoot|bus_stop/i;
+
+/** Every row of a Southwark table, with its shape in lon/lat. */
+async function southwarkRows(table, fields) {
+  const rows = [];
+  for (let page = 1; ; page++) {
+    const sql = `SELECT ${fields}, MI_Transform(Obj,'epsg:4326') AS geom FROM "${table}"`;
+    const { features = [] } = await southwarkGet(`/tables/features.json?q=${sql}&page=${page}&pageLength=1000`);
+    rows.push(...features);
+    if (features.length < 1000) return rows;
+  }
+}
+
+export async function southwarkKerb() {
+  const { Tables } = await southwarkGet('/tables.json');
+  const tables = Tables.filter((t) => t.startsWith('/NamedTables/TROs___') && !SOUTHWARK_SKIP.test(t));
+  if (tables.length < 20) throw new Error(`only ${tables.length} restriction tables`);
+  const out = [];
+  for (const table of tables) {
+    for (const f of await southwarkRows(table, 'Restriction_type_names, Operating_hours')) out.push(...southwarkElements(f.properties, f.geometry));
+  }
+  return out;
+}
+
+/** "08:30" → "8.30am"; "00:00" at the end of a range is midnight, "12am". */
+function clock12(t) {
+  const [h, m] = t.split(':').map(Number);
+  return `${h % 12 || 12}${m ? `.${String(m).padStart(2, '0')}` : ''}${h < 12 ? 'am' : 'pm'}`;
+}
+
+/**
+ * Southwark's hours ("Mon-Fri 08:00-18:30 Sat 09:30-12:30 MaxStay: 2h NoReturn: 2h",
+ * "00:00-00:00" for at any time, no days for every day) → "Mon-Fri 8am-6.30pm, Sat
+ * 9.30am-12.30pm (max stay 2 hours, no return within 2 hours)".
+ */
+export function southwarkHours(hours) {
+  const length = (s) => s.replace(/(\d+)([hm])/, (_, n, u) => `${n} ${u === 'h' ? 'hour' : 'minute'}${n === '1' ? '' : 's'}`);
+  const max = /MaxStay:\s*(\d+[hm])/.exec(hours)?.[1];
+  const back = /NoReturn:\s*(\d+[hm])/.exec(hours)?.[1];
+  const times = hours.replace(/(MaxStay|NoReturn):\s*\d+[hm]/g, ' ');
+  const segments = [...times.matchAll(/(?:\b((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)(?:-(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun))?)\s+)?((?:\d\d:\d\d-\d\d:\d\d\s*)+)/g)].map(([, days, ranges]) => {
+    const spans = ranges.trim().split(/\s+/);
+    const when = spans.some((s) => s === '00:00-00:00') ? 'at any time' : spans.map((s) => s.split('-').map(clock12).join('-')).join(' and ');
+    return days ? `${days} ${when}` : when === 'at any time' ? when : `Mon-Sun ${when}`;
+  });
+  const stay = [max && `max stay ${length(max)}`, back && `no return within ${length(back)}`].filter(Boolean).join(', ');
+  return `${segments.join(', ')}${stay ? ` (${stay})` : ''}`;
+}
+
+// What each of Southwark's codes means, before its hours.
+const SOUTHWARK_CODES = {
+  DYL: ['Double yellow line', 'No waiting'],
+  SYL: ['Single yellow line', 'No waiting'],
+  DYKM: ['Loading ban', 'No loading'],
+  SYKM: ['Loading ban', 'No loading'],
+  PB: ['Pay and display bay', 'Pay to park'],
+  PEB: ['Permit bay', 'Permit holders only'],
+  FB: ['Free bay', 'Free parking'],
+  DB: ['Disabled bay', 'Blue Badge holders only'],
+  LB: ['Loading bay', 'Loading only'],
+  VLB: ['Loading bay', 'Loading only'],
+  CCB: ['Car club bay', 'Car club vehicles only'],
+  EB: ['Electric vehicle bay', 'Electric vehicle charging only'],
+  MB: ['Motorcycle bay', 'Motorcycles only'],
+  DRB: ['Doctor bay', 'Doctors only'],
+  AB: ['Ambulance bay', 'Ambulances only'],
+  TB: ['Taxi rank', 'Taxis only'],
+  BSB: ['Bus bay', 'Bus stop: no stopping'],
+  MTB: ['Market trader bay', 'Market traders only'],
+  ASKCL: ['School keep clear marking', 'School keep clear'],
+};
+
+/**
+ * A Southwark restriction → kerb elements, one for each rule it holds
+ * ("PB Standard days: …, PEB Standard days: …"). A shared pay and permit bay is
+ * one rule, and a loading ban on a yellow line goes with the line.
+ */
+export function southwarkElements({ Operating_hours: hours = '' }, geometry) {
+  const rings = geometry?.type === 'MultiPolygon' ? geometry.coordinates.flat() : geometry?.type === 'Polygon' ? geometry.coordinates : null;
+  if (!rings) return [];
+  const p = rings.map((ring) => ring.map(([lon, lat]) => [round(lat), round(lon)]));
+  let parts = hours
+    .split(/,\s*(?=[A-Z]+ Standard days:)/)
+    .map((part) => /^([A-Z]+) Standard days:\s*(.*)$/.exec(part.trim()))
+    .filter((m) => m && SOUTHWARK_CODES[m[1]])
+    .map(([, code, when]) => ({ code, when: southwarkHours(when) }));
+  if (parts.some((x) => !x.code.endsWith('KM'))) parts = parts.filter((x) => !x.code.endsWith('KM'));
+  const has = (code) => parts.find((x) => x.code === code);
+  if (has('PB') && has('PEB')) parts = [{ code: 'shared', when: has('PB').when }, ...parts.filter((x) => !['PB', 'PEB'].includes(x.code))];
+  if (has('FB') && has('PEB')) parts = [{ code: 'limited', when: has('FB').when }, ...parts.filter((x) => !['FB', 'PEB'].includes(x.code))];
+  return parts.map(({ code, when }) => {
+    const [type, rule] = { shared: ['Shared use bay', 'Pay or permit holders'], limited: ['Permit or free bay', 'Permit holders or limited waiting'] }[code] ?? SOUTHWARK_CODES[code];
+    return { t: 'southwark', y: type, r: `${rule} ${when}`, p };
+  });
+}
+
+// Bankside's zone runs 8am-11pm every day, bank holidays too (its CPZ page,
+// checked 2026-10-23), where the map gives its pay bays' shorter hours.
+const SOUTHWARK_ZONES = {
+  C1: { hours: 'Mon-Sun 8am-11pm', notes: ['Including bank holidays. Some pay bays charge shorter hours: check the signs.'] },
+};
+
+export async function southwarkZones() {
+  const rows = await southwarkRows('/NamedTables/Southwark_Controlled_Parking_Z', 'Zone, Zone_name, Days_of_operation, Hours_of_operation');
+  return { type: 'FeatureCollection', features: rows.map((f) => southwarkZone(f.properties, f.geometry)) };
+}
+
+/**
+ * A row of Southwark's zone table → a zone. Days and hours are listed apart
+ * ("Mon - Fri, Sat" and "0800 - 1830, 0930 - 1230"); some new zones have no code.
+ */
+export function southwarkZone({ Zone: code, Zone_name: name = '', Days_of_operation: days = '', Hours_of_operation: times = '' }, geometry) {
+  const zone = code?.trim() || undefined;
+  const area = name.replace(/\s*\(?[A-Z]{1,3}\d?\)\s*$/, '').trim();
+  const dayList = days.replace(/_/g, '-').split(/\s*,\s*/).map((d) => d.replace(/\s*-\s*/g, '-'));
+  const hourList = times.split(/\s*,\s*/).map((h) =>
+    /all times|any ?time/i.test(h) ? 'at any time' : h.replace(/\s*-\s*/g, '-').replace(/\b(\d\d)(\d\d)\b/g, (_, a, b) => clock12(`${a}:${b}`)),
+  );
+  const hours = dayList.length === hourList.length ? dayList.map((d, i) => `${d} ${hourList[i]}`).join('; ') : `${dayList.join(', ')} ${hourList.join(' and ')}`;
+  return zoneFeature({ ...(zone ? { zone, area } : { title: area }), hours, ...SOUTHWARK_ZONES[zone] }, geometry);
 }
 
 async function harrowKerb() {
@@ -501,7 +712,7 @@ const GREENWICH = 'https://www.royalgreenwich.gov.uk';
 const GREENWICH_MAP = `${GREENWICH}/parking-transport-and-streets/check-if-you-need-parking-permit-or-update-your-details/check-if-you/map`;
 const GREENWICH_DIRECTORY = `${GREENWICH}/directory/71/cpz_fees`;
 
-async function greenwichZones() {
+export async function greenwichZones() {
   const page = await get(GREENWICH_MAP);
   const settings = JSON.parse(/<script type="application\/json" data-drupal-selector="drupal-settings-json">([\s\S]*?)<\/script>/.exec(page)?.[1] ?? 'null');
   const polygons = settings?.cpzMap?.polygons;
@@ -536,10 +747,11 @@ export function greenwichRecord(html) {
  */
 export function greenwichZone({ properties: p, geometry }, directory = {}) {
   const label = /^EX-HATCH-PERMIT-ELIGIBLE-CPZ-(.+)-([A-Z]{1,3})$/.exec(p.CPZ ?? '');
-  const zone = p['CPZ_eligbility_namelist_zoneinfo_CPZ code'];
+  // Its field names were cut to ten letters in October 2026: either will do.
+  const zone = p['CPZ_eligbility_namelist_zoneinfo_CPZ code'] ?? p.CPZ_elig_1;
   if (!label || /^LB /.test(label[1]) || !zone || zone.includes('*')) return null;
-  const name = label[2] === zone ? label[1] : (p.CPZ_eligbility_namelist_zoneinfo_Text ?? label[1]);
-  const mapHours = (p.CPZ_eligbility_namelist_zoneinfo_CPZ_optim ?? '').replace(/_(?=[A-Z]{3})/g, '; ').replace(/_/g, ' ');
+  const name = label[2] === zone ? label[1] : (p.CPZ_eligbility_namelist_zoneinfo_Text ?? p.CPZ_eligbi ?? label[1]);
+  const mapHours = (p.CPZ_eligbility_namelist_zoneinfo_CPZ_optim ?? p.CPZ_elig_2 ?? '').replace(/_(?=[A-Z]{3})/g, '; ').replace(/_/g, ' ');
   const area = directory[zone]?.name ?? name.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
   return zoneFeature({ zone, area, hours: directory[zone]?.hours || mapHours }, geometry);
 }
@@ -606,6 +818,18 @@ async function main(dataDir) {
       return found.length;
     });
   }
+  await run('havering', async () => {
+    const found = await haveringKerb();
+    if (found.length < 1000) throw new Error(`only ${found.length} restrictions`);
+    elements.push(...found);
+    return found.length;
+  });
+  await run('southwark', async () => {
+    const found = await southwarkKerb();
+    if (found.length < 1000) throw new Error(`only ${found.length} restrictions`);
+    elements.push(...found);
+    return found.length;
+  });
   await run('harrow', async () => {
     const found = await harrowKerb();
     if (found.length < 1000) throw new Error(`only ${found.length} restrictions`);
@@ -616,7 +840,7 @@ async function main(dataDir) {
   });
   await run('zone maps', async () => {
     let found = 0;
-    for (const [id, load] of [['islington', islingtonZones], ['lewisham', lewishamZones], ['haringey', haringeyZones], ['brent', brentZones], ['greenwich', greenwichZones]]) {
+    for (const [id, load] of [['islington', islingtonZones], ['lewisham', lewishamZones], ['haringey', haringeyZones], ['brent', brentZones], ['greenwich', greenwichZones], ['southwark', southwarkZones]]) {
       try {
         const z = await load();
         if (z.features.length < 20) throw new Error(`only ${z.features.length} zones`);

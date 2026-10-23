@@ -1,6 +1,6 @@
 // British National Grid (EPSG:27700) eastings and northings to WGS84 latitude
-// and longitude, via a Helmert transformation: good to about 5 m, plenty for
-// kerbside lines. After Ordnance Survey's "A guide to coordinate systems in Great Britain".
+// and longitude, and back, via a Helmert transformation: good to about 5 m,
+// plenty for kerbside lines and for asking a council's map about a place. After Ordnance Survey's "A guide to coordinate systems in Great Britain".
 
 const AIRY = { a: 6377563.396, b: 6356256.909 };
 const WGS84 = { a: 6378137, b: 6356752.3142 };
@@ -91,4 +91,23 @@ const deg = (rad) => (rad * 180) / Math.PI;
 export function osgbToWgs84(E, N) {
   const [lat, lon] = fromCartesian(helmert(toCartesian(gridToOsgb36(E, N), AIRY), HELMERT), WGS84);
   return [deg(lat), deg(lon)];
+}
+
+/** WGS84 [lat, lon] in degrees → [easting, northing], by working back from a first guess. */
+export function wgs84ToOsgb(lat, lon) {
+  // Near London a degree is about 111 km north and 69 km east.
+  let [E, N] = [400000 + (lon + 2) * 69400, (lat - 49) * 111320 - 100000];
+  for (let i = 0; i < 6; i++) {
+    const [a, b] = osgbToWgs84(E, N);
+    const [aE, bE] = osgbToWgs84(E + 1, N);
+    const [aN, bN] = osgbToWgs84(E, N + 1);
+    // Solve the 2×2 system for the step that closes the gap.
+    const det = (aE - a) * (bN - b) - (aN - a) * (bE - b);
+    const dE = ((lat - a) * (bN - b) - (aN - a) * (lon - b)) / det;
+    const dN = ((aE - a) * (lon - b) - (lat - a) * (bE - b)) / det;
+    E += dE;
+    N += dN;
+    if (Math.abs(dE) < 0.01 && Math.abs(dN) < 0.01) break;
+  }
+  return [E, N];
 }

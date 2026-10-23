@@ -14,6 +14,7 @@ const LAMBETH_CPZ = 'https://gis.lambeth.gov.uk/arcgis/rest/services/LambethCont
 const RBKC_INSPIRE = 'https://www.rbkc.gov.uk/arcgis/rest/services/RBKC/INSPIRE/MapServer';
 const HACKNEY_WFS = 'https://map2.hackney.gov.uk/geoserver/ows';
 const NEWHAM_CPZ = 'https://services1.arcgis.com/trOdpHvvP7HrTfdb/arcgis/rest/services/Controlled_Parking_Zones/FeatureServer/0';
+const HILLINGDON_CPZ = 'https://services1.arcgis.com/vBu1s2ZA7rxzmHBD/arcgis/rest/services/Car_Park__CPZ_and_Railways_WFL1/FeatureServer/4';
 // Zone maps browsers can't read, copied here each week by scripts/build-kerb-tiles.mjs.
 // Data files get the same version as this module after a deploy.
 const copied = (id) => new URL(`../../data/zones/${id}.json${new URL(import.meta.url).search}`, import.meta.url).href;
@@ -167,6 +168,32 @@ export const ZONE_LAYERS = [
     }),
     link: 'https://www.newham.gov.uk/parking-rules',
   },
+  // Hillingdon's parking management schemes, as mapped in 2013: newer ones are missing.
+  {
+    id: 'hillingdon',
+    borough: 'Hillingdon',
+    bbox: [51.45, -0.51, 51.632, -0.38],
+    url: (bbox) => arcgisQuery(HILLINGDON_CPZ, bbox, 'Name,Type,Times,Label_2,Zones'),
+    read: hillingdonZone,
+    label: 'parking management scheme',
+    notes: ["From the council's 2013 map of its parking schemes: newer schemes may be missing and hours may have changed. The signs at the entry to the zone have the final word."],
+    link: 'https://www.hillingdon.gov.uk/types-parking/resident-parking',
+  },
+  // The whole City is one controlled zone.
+  {
+    id: 'city-of-london',
+    borough: 'City of London',
+    district: 'City of London',
+    bbox: [51.506, -0.115, 51.524, -0.07],
+    url: (bbox) => arcgisQuery('https://www.mapping.cityoflondon.gov.uk/arcgis/rest/services/COMPASS_Boundary/MapServer/0', bbox, 'OBJECTID'),
+    read: () => ({
+      title: 'City of London',
+      hours: 'Mon-Fri 7am-7pm; Sat 7am-11am',
+      notes: ['Pay bays charge Mon-Fri 8am-7pm and Sat 8am-11am, for up to 4 hours. Not on bank holidays.'],
+    }),
+    label: 'controlled zone',
+    link: 'https://www.cityoflondon.gov.uk/services/parking/parking-restrictions',
+  },
   {
     id: 'harrow',
     borough: 'Harrow',
@@ -233,6 +260,15 @@ export const ZONE_LAYERS = [
     link: 'https://www.royalgreenwich.gov.uk/directory/71/cpz_fees',
   },
   {
+    id: 'southwark',
+    borough: 'Southwark',
+    district: 'Southwark',
+    bbox: [51.445, -0.112, 51.51, -0.029],
+    url: () => copied('southwark'),
+    read: (p) => ({ zone: p.zone, title: p.title, area: p.area, hours: p.hours, notes: p.notes }),
+    link: 'https://www.southwark.gov.uk/parking-streets-and-transport/parking/places-park/controlled-parking-zones-cpzs',
+  },
+  {
     id: 'haringey',
     borough: 'Haringey',
     district: 'Haringey',
@@ -242,6 +278,27 @@ export const ZONE_LAYERS = [
     link: 'https://haringey.gov.uk/parking/cpzs/all-cpz-hours',
   },
 ];
+
+/**
+ * A scheme on Hillingdon's map: "Hayes Parking Management Scheme Zone HY1",
+ * "Hayes Town Scheme" (pay and display, hours on the signs), or one of the
+ * map's test shapes, which are left out.
+ */
+export function hillingdonZone(p) {
+  const name = p.Name?.trim();
+  if (!name || !p.Zones?.trim() || /test/i.test(`${name} ${p.Zones}`)) return null;
+  const zone = /\bZone ([A-Z]{1,2}\d?)$/.exec(name)?.[1];
+  // Hillingdon Hill's stop and shop bays: "8am to 6am", for 6pm like Ickenham's.
+  const hours = p.Times?.trim().replace(/^8am to 6am\b/, '8am to 6pm');
+  return {
+    zone,
+    title: zone ? undefined : name,
+    area: p.Label_2?.trim() || undefined,
+    hours,
+    permitOnly: /permit bays only/i.test(p.Type ?? ''),
+    unknown: /pay and display/i.test(p.Type ?? '') ? 'Pay and display: hours are on the signs' : 'Hours are on the signs at the entry to the zone',
+  };
+}
 
 /**
  * A zone copied from a TraffWeb council's map: names like "GRANGE PARK CPZ"; a
@@ -324,6 +381,7 @@ export function parseZones(json, layer) {
     const polygons = rings(f.geometry).map((ring) => ring.map(([lon, lat]) => [lat, lon]));
     if (!polygons.length) continue;
     const read = layer.read(f.properties ?? {});
+    if (!read) continue;
     const key = JSON.stringify([read.zone ?? read.title, read.area, read.hours, read.notes]);
     if (options.has(key)) options.get(key).polygons.push(...polygons);
     else options.set(key, zoneOption(layer, read, polygons, f.properties?.link));

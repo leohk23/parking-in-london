@@ -11,6 +11,7 @@ import { loadOsmTiles } from './sources/osm-tiles.js';
 import { coverageHtml } from './coverage.js';
 import { fetchCamden } from './sources/camden.js';
 import { fetchCouncilZones, outsideZones } from './sources/council-zones.js';
+import { fetchBromleyZone } from './sources/bromley.js';
 import { fetchKerbside } from './sources/kerbside.js';
 import { loadStreetLists, streetListOptions, outsideStreetLists, streetListsCover, normaliseName } from './sources/street-lists.js';
 import { evaluateOption, STATUS_RANK, STATUS_LABELS } from './evaluate.js';
@@ -460,10 +461,13 @@ async function search({ query, dest }) {
       {
         name: "the council's zone map",
         key: 'council-zones',
-        load: Promise.all([fetchCouncilZones(area), council]).then(([r, district]) => ({
-          options: [...r.options, ...outsideZones(r, district, dest.point)],
-          skipped: r.skipped,
-        })),
+        // Bromley has no zone map, only a lookup of the zone at the spot searched.
+        load: Promise.all([fetchCouncilZones(area), council, council.then((district) => fetchBromleyZone(dest.point, district))]).then(
+          ([r, district, bromley]) => ({
+            options: [...r.options, ...bromley, ...outsideZones(r, district, dest.point)],
+            skipped: r.skipped && !bromley.length,
+          }),
+        ),
       },
       { name: "the council's kerbside map", key: 'kerbside', load: fetchKerbside(area) },
       { name: 'Camden bay data', key: 'camden', load: fetchCamden(area) },
