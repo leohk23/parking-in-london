@@ -25,7 +25,7 @@ export const COVERAGE = [
   ['Haringey', ['zones'], "The council's zone map", COPIED],
   ['Harrow', ['kerb', 'zones'], "The council's map of lines, bays and zones", COPIED],
   ['Havering', ['kerb'], "The council's traffic order map (StatMap)", COPIED],
-  ['Hillingdon', [], 'Nothing usable published yet'],
+  ['Hillingdon', ['zones'], "The council's 2013 map of its parking schemes, which may miss newer ones", LIVE],
   ['Hounslow', ['kerb'], 'TraffWeb traffic orders', COPIED],
   ['Islington', ['zones'], "The council's zone map", COPIED],
   ['Kensington & Chelsea', ['zones', 'kerb'], "Zones and residents' bay hours from the council's map (live); lines and bays from TraffWeb", COPIED],

@@ -208,6 +208,20 @@ test("Lewisham's two-part hours and Greenwich's labels", async () => {
   assert.deepEqual(greenwichZone(short).properties, { zone: 'C', area: 'Charlton', hours: 'MON-SAT 9am-6.30pm' });
 });
 
+test("Hillingdon's schemes, without the map's test shapes", async () => {
+  const { hillingdonZone } = await import('../src/sources/council-zones.js');
+  assert.deepEqual(hillingdonZone({ Name: 'Hayes Parking Management Scheme Zone HY2', Type: 'Resident Permit Bays only', Times: '9am to 5pm - Mon to Fri', Label_2: 'Hayes - Keith Road', Zones: 'HY2' }), {
+    zone: 'HY2', title: undefined, area: 'Hayes - Keith Road', hours: '9am to 5pm - Mon to Fri', permitOnly: true, unknown: 'Hours are on the signs at the entry to the zone',
+  });
+  const town = hillingdonZone({ Name: 'Hayes Town Scheme', Type: 'Pay and Display', Label_2: 'Hayes Town', Zones: 'TOWN CENTRE SCHEME' });
+  assert.equal(town.title, 'Hayes Town Scheme');
+  assert.equal(town.unknown, 'Pay and display: hours are on the signs');
+  assert.equal(hillingdonZone({ Name: 'Hillingdon Hill Stop & Shop Parking Scheme', Type: 'Pay and Display', Times: '8am to 6am - Mon to Sat Max stay 2 hours', Zones: 'STOP AND SHOP' }).hours, '8am to 6pm - Mon to Sat Max stay 2 hours');
+  assert.equal(hillingdonZone({ Name: 'y2', Type: 'resident' }), null);
+  assert.equal(hillingdonZone({ Name: 'X1 Zone test', Times: '9am to 5pm - Mon to Sat', Zones: 'X1' }), null);
+  assert.equal(hillingdonZone({ Zones: 'test' }), null);
+});
+
 test("Southwark's hours, rules and zones", async () => {
   const { southwarkHours, southwarkElements, southwarkZone } = await import('../scripts/build-kerb-tiles.mjs');
   assert.equal(southwarkHours('Mon-Fri 08:00-18:30 Sat 09:30-12:30 MaxStay: 2h NoReturn: 30m'), 'Mon-Fri 8am-6.30pm, Sat 9.30am-12.30pm (max stay 2 hours, no return within 30 minutes)');

@@ -11,7 +11,7 @@ test("the About box lists London's 33 areas", () => {
   assert.equal(COVERAGE.length, 33);
   assert.equal(new Set(COVERAGE.map(([name]) => name)).size, 33);
   for (const [, kinds] of COVERAGE) for (const k of kinds) assert.ok(KINDS[k], k);
-  assert.match(coverageHtml(), /for 31 of London's 33 areas/);
+  assert.match(coverageHtml(), /for 32 of London's 33 areas/);
   const html = coverageHtml({ updated: '2026-10-20', osmUpdated: '2026-10-19', search: { checkedAt: '14:05', isNow: true, timing: 'Loaded in 1.2 s: zone map 0.8 s' } });
   assert.match(html, /This search<\/strong> was checked at 14:05, for parking then\..*Loaded in 1.2 s: zone map 0.8 s/s);
   assert.match(html, /Data last refreshed: council copies 2026-10-20 · OpenStreetMap 2026-10-19\./);
