@@ -1,6 +1,6 @@
 // What the app knows about each of London's 33 areas, for the "About the data"
 // box behind the map's ⓘ button. Keep it in step with the sources: council-zones.js,
-// kerbside.js, street-lists.js, camden.js and scripts/build-kerb-tiles.mjs.
+// kerbside.js, street-lists.js, camden.js, bromley.js and scripts/build-kerb-tiles.mjs.
 
 // How each kind of data is kept up to date.
 const LIVE = 'Live from the council when you search';
@@ -13,7 +13,7 @@ export const COVERAGE = [
   ['Barnet', ['kerb'], 'TraffWeb traffic orders', COPIED],
   ['Bexley', ['kerb', 'zones'], "TraffWeb, with hours from the council's permits page", COPIED],
   ['Brent', ['zones'], "The council's zone map, with hours from its zone table", COPIED],
-  ['Bromley', [], 'Nothing usable published yet'],
+  ['Bromley', ['lookup'], "The council's zone lookup, for the spot you search: it publishes no zone map", LIVE],
   ['Camden', ['bays', 'kerb'], 'Bays from Camden open data, with tariffs (live); lines from TraffWeb', COPIED],
   ['City of London', ['zones', 'kerb'], "The City's map of lines and bays", LIVE],
   ['Croydon', ['kerb'], 'TraffWeb traffic orders', COPIED],
@@ -49,6 +49,7 @@ export const KINDS = {
   zones: ['Zones', 'Parking zone outlines and their hours'],
   streets: ['Street list', "Each street's zone and hours, drawn along the street"],
   bays: ['Bays', 'Every bay, with its times and tariff'],
+  lookup: ['Zone lookup', 'The zone and its hours at the spot you search, without an outline'],
 };
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);

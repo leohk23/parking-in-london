@@ -14,7 +14,7 @@
 
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { osgbToWgs84 } from './osgb.mjs';
+import { osgbToWgs84 } from '../src/osgb.js';
 import { STEP, tileKey } from './build-osm-tiles.mjs';
 import { parseSchedule } from '../src/schedule.js';
 

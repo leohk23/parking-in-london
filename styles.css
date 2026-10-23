@@ -702,6 +702,10 @@ button.link {
   background: color-mix(in srgb, #8e44ad 22%, transparent);
 }
 
+.chip-kind.lookup {
+  background: color-mix(in srgb, #b8336a 20%, transparent);
+}
+
 .chip-kind.none {
   background: color-mix(in srgb, var(--muted) 18%, transparent);
   color: var(--muted);
