@@ -167,6 +167,21 @@ export const ZONE_LAYERS = [
     }),
     link: 'https://www.newham.gov.uk/parking-rules',
   },
+  // The whole City is one controlled zone.
+  {
+    id: 'city-of-london',
+    borough: 'City of London',
+    district: 'City of London',
+    bbox: [51.506, -0.115, 51.524, -0.07],
+    url: (bbox) => arcgisQuery('https://www.mapping.cityoflondon.gov.uk/arcgis/rest/services/COMPASS_Boundary/MapServer/0', bbox, 'OBJECTID'),
+    read: () => ({
+      title: 'City of London',
+      hours: 'Mon-Fri 7am-7pm; Sat 7am-11am',
+      notes: ['Pay bays charge Mon-Fri 8am-7pm and Sat 8am-11am, for up to 4 hours. Not on bank holidays.'],
+    }),
+    label: 'controlled zone',
+    link: 'https://www.cityoflondon.gov.uk/services/parking/parking-restrictions',
+  },
   {
     id: 'harrow',
     borough: 'Harrow',

@@ -15,7 +15,7 @@ export const COVERAGE = [
   ['Brent', ['zones'], "The council's zone map, with hours from its zone table", COPIED],
   ['Bromley', [], 'Nothing usable published yet'],
   ['Camden', ['bays', 'kerb'], 'Bays from Camden open data, with tariffs (live); lines from TraffWeb', COPIED],
-  ['City of London', [], 'Only car parks published'],
+  ['City of London', ['zones', 'kerb'], "The City's map of lines and bays", LIVE],
   ['Croydon', ['kerb'], 'TraffWeb traffic orders', COPIED],
   ['Ealing', ['streets'], "The council's 61 zone pages", COPIED],
   ['Enfield', ['kerb', 'zones'], 'TraffWeb traffic orders', COPIED],

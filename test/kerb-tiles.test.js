@@ -228,3 +228,15 @@ test("Havering's traffic orders: static restrictions in force, in GPS coordinate
   const area = haveringElement(record({ RESTRICTION_TYPE: 'Permit Parking Area', GEOMETRY: JSON.stringify({ type: 'Polygon', coordinates: [[[551600, 187900], [551700, 187900], [551700, 188000], [551600, 187900]]] }) }), now);
   assert.equal(area.p[0].length, 4);
 });
+
+test('City of London restrictions, by map layer', async () => {
+  const { cityRestriction } = await import('../src/sources/kerbside.js');
+  const sat = 'Monday to Friday, 7am to 7pm and Saturday, 7am to 11am except Christmas Day, Good Friday or a Bank Holiday';
+  const at = (p, layer) => { const { type, text } = cityRestriction(p, layer); return summary(text, type); };
+  assert.equal(at({ HOURS: 'At any time' }, 52), 'No parking');
+  assert.equal(at({ HOURS: sat }, 52), 'No parking until 19:00, then free');
+  assert.equal(at({ HOURS: 'Monday to Sunday, 10pm to 7am' }, 51), 'Free until 22:00, then no parking');
+  assert.equal(at({ PRESCRIBED_HOURS: sat, CHARGE_HOURS: sat.replace(/7am to 7pm/, '8am to 7pm'), MAXIMUM_STAY: '4 Hours' }, 69), 'Pay to park until 19:00, then free');
+  assert.equal(at({ PRESCRIBED_HOURS: '7 a.m. - 7 p.m. Mon-Fri 7 a.m. - 11 a.m. Sat except Christmas Day' }, 70), 'Taxis only until 19:00, then free');
+  assert.equal(at({ PRESCRIBED_HOURS: 'At any time' }, 72), 'Blue Badge holders only');
+});

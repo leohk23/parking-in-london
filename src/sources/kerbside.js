@@ -6,10 +6,11 @@
 
 import { parseSchedule } from '../schedule.js';
 import { bboxesOverlap } from '../geo.js';
-import { wfsQuery } from './council-zones.js';
+import { arcgisQuery, wfsQuery } from './council-zones.js';
 import { loadTiles } from './tiles.js';
 
 const SUTTON_WFS = 'https://sutton.statmap.co.uk/map/wfs.svc/open_data_lbs_wfs';
+const CITY_INSPIRE = 'https://www.mapping.cityoflondon.gov.uk/arcgis/rest/services/INSPIRE/MapServer';
 const TILES = new URL('../../data/kerb/', import.meta.url).href;
 
 /** A council in the prebuilt tiles, whose elements are { t: id, y: type, r: restriction, g: lines | p: rings }. */
@@ -24,6 +25,16 @@ export const KERB_LAYERS = [
     url: (typeName, bbox) => wfsQuery(SUTTON_WFS, typeName, bbox),
     read: (p) => ({ type: p.Type?.trim(), text: p.Restriction?.trim() }),
     link: 'https://www.data.gov.uk/dataset/bd943ff7-e654-4922-b1a4-4b242292cb15',
+  },
+  // The City's map server answers browsers: a layer for each kind of restriction.
+  {
+    id: 'city-of-london',
+    borough: 'City of London',
+    bbox: [51.506, -0.115, 51.524, -0.07],
+    typeNames: [52, 51, 69, 70, 71, 72, 73, 74, 63],
+    url: (layer, bbox) => arcgisQuery(`${CITY_INSPIRE}/${layer}`, bbox, '*'),
+    read: cityRestriction,
+    link: 'https://www.cityoflondon.gov.uk/services/parking/parking-restrictions',
   },
   tiled('harrow', 'Harrow', [51.553, -0.407, 51.633, -0.264], 'https://www.harrow.gov.uk/parking'),
   tiled('enfield', 'Enfield', [51.606, -0.182, 51.685, -0.01], 'https://enfield.traffweb.app/'),
@@ -55,7 +66,9 @@ export async function fetchKerbside(bbox, { fetchImpl = fetch, layers = KERB_LAY
       layer.typeNames.map(async (typeName) => {
         const res = await fetchImpl(layer.url(typeName, bbox));
         if (!res.ok) throw new Error(`${layer.borough} kerbside map returned ${res.status}`);
-        return parseKerbside(await res.json(), layer);
+        const json = await res.json();
+        if (json.error) throw new Error(`${layer.borough} kerbside map: ${json.error.message}`);
+        return parseKerbside(json, layer, typeName);
       }),
     ),
     fromTiles.length &&
@@ -88,9 +101,36 @@ function decodeLine(flat) {
   return out;
 }
 
-/** GeoJSON features → one option per stretch of kerb. */
-export function parseKerbside(json, layer) {
-  return (json.features ?? []).map((f) => kerbOption(layer, layer.read(f.properties ?? {}), toShape(f.geometry ?? {}))).filter(Boolean);
+/** GeoJSON features (of one of the layer's types) → one option per stretch of kerb. */
+export function parseKerbside(json, layer, typeName) {
+  return (json.features ?? []).map((f) => kerbOption(layer, layer.read(f.properties ?? {}, typeName), toShape(f.geometry ?? {}))).filter(Boolean);
+}
+
+/**
+ * A City of London restriction, by its map layer, → { type, text }. Waiting
+ * restrictions say only their hours: "At any time" is a double yellow line.
+ */
+export function cityRestriction(p, layer) {
+  const hours = (p.HOURS ?? p.CHARGE_HOURS ?? p.PRESCRIBED_HOURS ?? '').trim().replace(/\b([ap])\.m\./gi, '$1m');
+  const anyTime = !hours || /any ?time/i.test(hours);
+  switch (layer) {
+    case 52:
+      return anyTime ? { type: 'Double yellow line', text: 'No waiting at any time' } : { type: 'Single yellow line', text: `No waiting ${hours}` };
+    case 51:
+      return { type: 'Loading restriction', text: `No loading ${anyTime ? 'at any time' : hours}` };
+    case 69:
+      return { type: 'Pay and display bay', text: `Pay by phone ${hours}${p.MAXIMUM_STAY ? `, max stay ${p.MAXIMUM_STAY}` : ''}` };
+    case 70:
+      return { type: 'Taxi rest bay', text: `Taxis only ${anyTime ? 'at any time' : hours}` };
+    case 71:
+      return { type: 'Motorcycle bay', text: `Motorcycles only ${anyTime ? 'at any time' : hours}` };
+    case 72:
+      return { type: 'Disabled bay', text: 'Blue Badge holders only' };
+    case 63:
+      return { type: 'Coach bay', text: 'Coaches only at any time' };
+    default:
+      return { type: 'Loading bay', text: `Loading only ${anyTime ? 'at any time' : hours}` };
+  }
 }
 
 function kerbOption(layer, { type, text }, shape) {
