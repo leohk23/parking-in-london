@@ -9,7 +9,7 @@
 // week, and keeps its committed zone map.
 //
 // Sources: councils' TraffWeb traffic order maps (GML in British National
-// Grid), and Harrow's ArcGIS map server.
+// Grid), Harrow's ArcGIS map server, and Havering's StatMap TRO map.
 
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -190,6 +190,88 @@ function shape(geometry) {
       return { p: geometry.coordinates.map(flip) };
     case 'MultiPolygon':
       return { p: geometry.coordinates.flat().map(flip) };
+    default:
+      return null;
+  }
+}
+
+// Havering's traffic orders are on its StatMap TRO map (havering.statmap.co.uk/tro),
+// which wants a session: log in as its public user, open the map, then ask for
+// the restrictions in force in boxes covering the borough. Only that read-only
+// function is called.
+const HAVERING_TRO = 'https://havering.statmap.co.uk/tro/SMJobs.svc/Earthlight/';
+// The borough in British National Grid, and the size of each box asked for.
+const HAVERING_GRID = { x: [548000, 562000], y: [178400, 195000], step: 3500 };
+
+async function haveringKerb(now = new Date()) {
+  let session = null;
+  const post = async (op, job) => {
+    for (let i = 1; ; i++) {
+      try {
+        const res = await fetch(`${HAVERING_TRO}${op}?id=${session ?? ''}`, {
+          method: 'POST',
+          // It answers "Request Error" to application/json.
+          headers: { 'Content-Type': 'text/plain', 'User-Agent': 'parking-in-london (github.com/leohk23/parking-in-london)' },
+          body: JSON.stringify({ ...job, SessionId: session }),
+          signal: AbortSignal.timeout(300_000),
+        });
+        if (!res.ok) throw new Error(`${res.status} from ${op}`);
+        return JSON.parse((await res.text()).replace(/^﻿/, ''));
+      } catch (err) {
+        if (i >= 5) throw err;
+        await new Promise((r) => setTimeout(r, 3000 * i));
+      }
+    }
+  };
+  // Jobs that take a while finish later: poll for them.
+  const run = async (op, job) => {
+    let status = await post(op, job);
+    const started = Date.now();
+    while (!status.IsFinished) {
+      if (Date.now() - started > 900_000) throw new Error(`${op} took too long`);
+      await new Promise((r) => setTimeout(r, 500));
+      const { Result } = await post('ManageJobs', { Action: 0, JobIds: [] });
+      status = Result.Statuses.find((s) => s.JobId === status.JobId) ?? status;
+    }
+    if (status.Error) throw new Error(JSON.stringify(status.Error).slice(0, 300));
+    return status.Result;
+  };
+  session = (await post('RequestSessionJob', { UserName: 'tro_public', Password: null, DecryptCredentials: false })).Result.SessionInfo.SessionId;
+  await run('OpenMapJob', { MapFileName: '\\TRO DataDirectory\\Traffic Regulation Orders.Map$' });
+  const records = new Map();
+  const { x, y, step } = HAVERING_GRID;
+  for (let y0 = y[0]; y0 < y[1]; y0 += step) {
+    for (let x0 = x[0]; x0 < x[1]; x0 += step) {
+      const box = JSON.stringify({ p1: { x: x0, y: y0 }, p2: { x: x0 + step, y: y0 + step } });
+      const result = await run('RunServerScriptFunctionJob', { FunctionName: 'getCurrentAndFutureRestrictions', Arguments: [box] });
+      for (const r of JSON.parse(result.Result)[0]) records.set(r.MI_PRINX, r);
+    }
+  }
+  return [...records.values()].map((r) => haveringElement(r, now)).filter(Boolean);
+}
+
+/**
+ * A Havering TRO record → a kerb element, or null for sign plates and survey
+ * points ("Inventory"), moving-traffic orders, orders not yet in force, and
+ * restrictions that aren't about parking.
+ */
+export function haveringElement(r, now = new Date()) {
+  if (r.KIND !== 'Static') return null;
+  if (r.DATE_FROM && new Date(r.DATE_FROM) > now) return null;
+  const type = r.RESTRICTION_TYPE ?? '';
+  const text = r.RESTRICTION || type;
+  if (!text || NOT_PARKING.test(type) || NOT_PARKING.test(text)) return null;
+  const geometry = JSON.parse(r.GEOMETRY ?? 'null');
+  const toLatLon = (line) => line.map(([e, n]) => osgbToWgs84(e, n).map(round));
+  switch (geometry?.type) {
+    case 'LineString':
+      return { t: 'havering', y: type, r: text, g: [toLatLon(geometry.coordinates)] };
+    case 'MultiLineString':
+      return { t: 'havering', y: type, r: text, g: geometry.coordinates.map(toLatLon) };
+    case 'Polygon':
+      return { t: 'havering', y: type, r: text, p: geometry.coordinates.map(toLatLon) };
+    case 'MultiPolygon':
+      return { t: 'havering', y: type, r: text, p: geometry.coordinates.flat().map(toLatLon) };
     default:
       return null;
   }
@@ -606,6 +688,12 @@ async function main(dataDir) {
       return found.length;
     });
   }
+  await run('havering', async () => {
+    const found = await haveringKerb();
+    if (found.length < 1000) throw new Error(`only ${found.length} restrictions`);
+    elements.push(...found);
+    return found.length;
+  });
   await run('harrow', async () => {
     const found = await harrowKerb();
     if (found.length < 1000) throw new Error(`only ${found.length} restrictions`);

@@ -208,3 +208,23 @@ test("Lewisham's two-part hours and Greenwich's labels", async () => {
 test("a bay code like TH-0106 isn't read as Thursday", () => {
   assert.equal(summary('Car Club Permit Holders Only TH-0106', 'Car Club Parking Place'), 'Car club vehicles only');
 });
+
+test("Havering's traffic orders: static restrictions in force, in GPS coordinates", async () => {
+  const { haveringElement } = await import('../scripts/build-kerb-tiles.mjs');
+  const record = (fields) => ({
+    MI_PRINX: 1, KIND: 'Static', DATE_FROM: '2018-10-12T00:00:00', RESTRICTION_TYPE: 'Residents Parking',
+    RESTRICTION: 'Resident permit holders only (Zone_RO3) Mon-Sat 8.30am-6.30pm',
+    GEOMETRY: JSON.stringify({ type: 'LineString', coordinates: [[551655.75, 187953.9], [551684.17, 187965.0]] }),
+    ...fields,
+  });
+  const now = new Date('2026-10-23');
+  const bay = haveringElement(record(), now);
+  assert.deepEqual([bay.t, bay.y, bay.g[0].length], ['havering', 'Residents Parking', 2]);
+  assert.ok(Math.abs(bay.g[0][0][0] - 51.576) < 0.01 && Math.abs(bay.g[0][0][1] - 0.183) < 0.01, JSON.stringify(bay.g[0][0]));
+  assert.equal(summary(bay.r, bay.y), 'Permit holders only until 18:30, then free');
+  assert.equal(haveringElement(record({ KIND: 'Inventory' }), now), null);
+  assert.equal(haveringElement(record({ DATE_FROM: '2027-01-01T00:00:00' }), now), null);
+  assert.equal(haveringElement(record({ RESTRICTION_TYPE: '2 Wheel Parking', RESTRICTION: '2 Wheel Parking' }), now), null);
+  const area = haveringElement(record({ RESTRICTION_TYPE: 'Permit Parking Area', GEOMETRY: JSON.stringify({ type: 'Polygon', coordinates: [[[551600, 187900], [551700, 187900], [551700, 188000], [551600, 187900]]] }) }), now);
+  assert.equal(area.p[0].length, 4);
+});

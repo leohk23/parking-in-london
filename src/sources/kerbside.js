@@ -33,6 +33,7 @@ export const KERB_LAYERS = [
   tiled('lewisham', 'Lewisham', [51.415, -0.076, 51.495, 0.042], 'https://lewisham.traffweb.app/'),
   tiled('greenwich', 'Greenwich', [51.423, -0.031, 51.511, 0.125], 'https://greenwich.traffweb.app/'),
   tiled('bexley', 'Bexley', [51.407, 0.073, 51.513, 0.213], 'https://bexley.traffweb.app/'),
+  tiled('havering', 'Havering', [51.485, 0.13, 51.63, 0.339], 'https://havering.statmap.co.uk/tro/map.html?login=tro_public'),
   tiled('croydon', 'Croydon', [51.293, -0.164, 51.425, 0.003], 'https://croydon.traffweb.app/'),
   tiled('hounslow', 'Hounslow', [51.421, -0.462, 51.504, -0.242], 'https://hounslow.traffweb.app/'),
   tiled('barnet', 'Barnet', [51.553, -0.3, 51.667, -0.127], 'https://barnet.traffweb.app/'),
