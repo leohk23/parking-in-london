@@ -203,6 +203,37 @@ test("Lewisham's two-part hours and Greenwich's labels", async () => {
   });
   assert.equal(greenwichZone(feature('EX-HATCH-PERMIT-ELIGIBLE-CPZ-LB BEXLEY-ABBEY WOOD-AW', 'AW*', 'MON-FRI_11am-1pm')), null);
   assert.equal(greenwichZone(feature('Exempt')), null);
+  // The same fields, cut to ten letters.
+  const short = { properties: { CPZ: 'EX-HATCH-PERMIT-ELIGIBLE-CPZ-CHARLTON-C', CPZ_eligbi: 'Charlton', CPZ_elig_1: 'C', CPZ_elig_2: 'MON-SAT_9am-6.30pm' }, geometry };
+  assert.deepEqual(greenwichZone(short).properties, { zone: 'C', area: 'Charlton', hours: 'MON-SAT 9am-6.30pm' });
+});
+
+test("Southwark's hours, rules and zones", async () => {
+  const { southwarkHours, southwarkElements, southwarkZone } = await import('../scripts/build-kerb-tiles.mjs');
+  assert.equal(southwarkHours('Mon-Fri 08:00-18:30 Sat 09:30-12:30 MaxStay: 2h NoReturn: 30m'), 'Mon-Fri 8am-6.30pm, Sat 9.30am-12.30pm (max stay 2 hours, no return within 30 minutes)');
+  assert.equal(southwarkHours('00:00-00:00'), 'at any time');
+  assert.equal(southwarkHours('00:00-08:00 18:30-00:00'), 'Mon-Sun 12am-8am and 6.30pm-12am');
+  assert.equal(southwarkHours('Mon-Sat 08:30-18:30 MaxStay: 1h'), 'Mon-Sat 8.30am-6.30pm (max stay 1 hour)');
+
+  const geometry = { type: 'MultiPolygon', coordinates: [[[[-0.09, 51.49], [-0.091, 51.49], [-0.09, 51.491], [-0.09, 51.49]]]] };
+  const rules = (hours) => southwarkElements({ Operating_hours: hours }, geometry).map((el) => [el.y, el.r]);
+  // A shared bay is one rule; the loading ban on a yellow line goes with the line.
+  assert.deepEqual(rules('PB Standard days: Mon-Fri 08:30-18:30 MaxStay: 4h, PEB Standard days: Mon-Fri 08:30-18:30'), [['Shared use bay', 'Pay or permit holders Mon-Fri 8.30am-6.30pm (max stay 4 hours)']]);
+  assert.deepEqual(rules('DYL Standard days: 00:00-00:00, SYKM Standard days: 07:00-10:00 16:00-19:00'), [['Double yellow line', 'No waiting at any time']]);
+  assert.deepEqual(rules('PEB Standard days: Mon-Fri 08:30-18:30'), [['Permit bay', 'Permit holders only Mon-Fri 8.30am-6.30pm']]);
+  const [bay] = southwarkElements({ Operating_hours: 'FB Standard days: Mon-Fri 08:30-18:30 MaxStay: 30m NoReturn: 2h' }, geometry);
+  assert.deepEqual(bay.p[0][0], [51.49, -0.09]);
+  assert.equal(summary(bay.r, bay.y), 'Free for up to 30 minutes until 18:30, then free');
+  assert.equal(summary('Pay or permit holders Mon-Fri 8.30am-6.30pm (max stay 4 hours)', 'Shared use bay'), 'Pay to park until 18:30, then free');
+
+  const c1 = southwarkZone({ Zone: 'C1', Zone_name: 'Bankside (C1)', Days_of_operation: 'Mon - Fri, Sat', Hours_of_operation: '0800 - 1830, 0930 - 1230' }, geometry);
+  // The council's page wins for Bankside, where the map has its pay bays' hours.
+  assert.equal(c1.properties.hours, 'Mon-Sun 8am-11pm');
+  const g = southwarkZone({ Zone: 'G', Zone_name: 'Bermondsey (G)', Days_of_operation: 'Mon - Sun', Hours_of_operation: '0830 - 2300' }, geometry);
+  assert.deepEqual(g.properties, { zone: 'G', area: 'Bermondsey', hours: 'Mon-Sun 8.30am-11pm' });
+  const clink = southwarkZone({ Zone: '', Zone_name: 'RPZ Clink Street', Days_of_operation: 'Mon - Sun', Hours_of_operation: 'At all times' }, geometry);
+  assert.deepEqual(clink.properties, { title: 'RPZ Clink Street', hours: 'Mon-Sun at any time' });
+  assert.equal(southwarkZone({ Zone: 'PR', Zone_name: 'Peckham Road South (PR)', Days_of_operation: 'Mon_Fri', Hours_of_operation: '0830 - 1830' }, geometry).properties.hours, 'Mon-Fri 8.30am-6.30pm');
 });
 
 test("a bay code like TH-0106 isn't read as Thursday", () => {

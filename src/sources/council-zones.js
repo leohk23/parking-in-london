@@ -248,6 +248,15 @@ export const ZONE_LAYERS = [
     link: 'https://www.royalgreenwich.gov.uk/directory/71/cpz_fees',
   },
   {
+    id: 'southwark',
+    borough: 'Southwark',
+    district: 'Southwark',
+    bbox: [51.445, -0.112, 51.51, -0.029],
+    url: () => copied('southwark'),
+    read: (p) => ({ zone: p.zone, title: p.title, area: p.area, hours: p.hours, notes: p.notes }),
+    link: 'https://www.southwark.gov.uk/parking-streets-and-transport/parking/places-park/controlled-parking-zones-cpzs',
+  },
+  {
     id: 'haringey',
     borough: 'Haringey',
     district: 'Haringey',

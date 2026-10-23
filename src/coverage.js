@@ -36,7 +36,7 @@ export const COVERAGE = [
   ['Newham', ['zones'], "The council's zone map, which may miss newer zones", LIVE],
   ['Redbridge', ['kerb'], 'TraffWeb traffic orders', COPIED],
   ['Richmond', ['streets'], "The council's address lookup, at both ends of every street", MONTHLY],
-  ['Southwark', [], 'Nothing usable published yet'],
+  ['Southwark', ['kerb', 'zones'], "The council's map of lines, bays and zones", COPIED],
   ['Sutton', ['zones', 'kerb'], "The council's map of zones, lines and bays", LIVE],
   ['Tower Hamlets', ['kerb'], 'TraffWeb traffic orders', COPIED],
   ['Waltham Forest', ['kerb'], 'TraffWeb traffic orders', COPIED],
