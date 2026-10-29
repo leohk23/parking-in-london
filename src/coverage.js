@@ -1,6 +1,8 @@
-// What the app knows about each of London's 33 areas, for the "About the data"
-// box behind the map's ⓘ button. Keep it in step with the sources: council-zones.js,
-// kerbside.js, street-lists.js, camden.js, bromley.js and scripts/build-kerb-tiles.mjs.
+// What the app knows about each of London's 33 areas, and the few places
+// outside London it covers, for the "About the data" box behind the map's ⓘ
+// button. Keep it in step with the sources: council-zones.js, kerbside.js,
+// street-lists.js, camden.js, bromley.js, perth-kinross.js and
+// scripts/build-kerb-tiles.mjs.
 
 // How each kind of data is kept up to date.
 const LIVE = 'Live from the council when you search';
@@ -44,12 +46,18 @@ export const COVERAGE = [
   ['Westminster', ['kerb'], 'TraffWeb traffic orders', COPIED],
 ];
 
+/** Places outside London the app covers (areas.js), the same way. */
+export const EXTRA_COVERAGE = [
+  ['Pitlochry', ['carparks'], "Perth & Kinross Council's car parks, with charging hours from RingGo; a note on the town's 30-minute street parking", LIVE],
+];
+
 export const KINDS = {
   kerb: ['Lines and bays', 'Every yellow line, bay and crossing, with its times'],
   zones: ['Zones', 'Parking zone outlines and their hours'],
   streets: ['Street list', "Each street's zone and hours, drawn along the street"],
   bays: ['Bays', 'Every bay, with its times and tariff'],
   lookup: ['Zone lookup', 'The zone and its hours at the spot you search, without an outline'],
+  carparks: ['Car parks', "The council's car parks, with their charging hours"],
 };
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -61,13 +69,14 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
  */
 export function coverageHtml({ updated, osmUpdated, search } = {}) {
   const covered = COVERAGE.filter(([, kinds]) => kinds.length).length;
-  const rows = COVERAGE.map(([name, kinds, from, how]) => {
+  const row = ([name, kinds, from, how]) => {
     const chips = kinds.map((k) => `<span class="chip-kind ${k}">${KINDS[k][0]}</span>`).join('');
     return `<li class="${kinds.length ? '' : 'none'}">
       <div class="cov-head"><strong>${esc(name)}</strong>${chips || '<span class="chip-kind none">Not yet</span>'}</div>
       <div class="cov-src">${esc(from)}${how ? ` · ${esc(how)}` : ''}</div>
     </li>`;
-  }).join('');
+  };
+  const rows = COVERAGE.map(row).join('');
   const thisSearch = search
     ? `<div class="cov-search"><strong>This search</strong> was checked at ${esc(search.checkedAt)}${search.isNow ? ', for parking then' : ''}.${
         search.timing ? `<br /><span class="cov-timing">${esc(search.timing)}</span>` : ''
@@ -85,5 +94,7 @@ export function coverageHtml({ updated, osmUpdated, search } = {}) {
     <p class="cov-note">Everywhere: car parks and street parking mapped on OpenStreetMap, refreshed weekly.
       Where a council's server doesn't allow browsers, its data is copied onto this site.</p>
     <ul class="cov-list">${rows}</ul>
+    <h3 class="cov-extra">Outside London</h3>
+    <ul class="cov-list">${EXTRA_COVERAGE.map(row).join('')}</ul>
     <p class="info-src">Always check the signs on the street: they override anything shown here.</p>`;
 }

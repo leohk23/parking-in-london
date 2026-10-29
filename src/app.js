@@ -12,6 +12,8 @@ import { coverageHtml } from './coverage.js';
 import { fetchCamden } from './sources/camden.js';
 import { fetchCouncilZones, outsideZones } from './sources/council-zones.js';
 import { fetchBromleyZone } from './sources/bromley.js';
+import { fetchPerthKinross } from './sources/perth-kinross.js';
+import { extraAreaAt } from './areas.js';
 import { fetchKerbside } from './sources/kerbside.js';
 import { loadStreetLists, streetListOptions, outsideStreetLists, streetListsCover, normaliseName } from './sources/street-lists.js';
 import { evaluateOption, STATUS_RANK, STATUS_LABELS } from './evaluate.js';
@@ -22,6 +24,7 @@ const $ = (sel) => document.querySelector(sel);
 const SOURCE_LABELS = {
   osm: 'OpenStreetMap',
   camden: 'Camden Council open data',
+  'perth-kinross': 'Perth & Kinross Council open data',
   'street-list': "Council's street list",
   'council-zones': "Council's zone map",
   kerbside: "Council's kerbside map",
@@ -471,6 +474,7 @@ async function search({ query, dest }) {
       },
       { name: "the council's kerbside map", key: 'kerbside', load: fetchKerbside(area) },
       { name: 'Camden bay data', key: 'camden', load: fetchCamden(area) },
+      { name: "Perth & Kinross Council's car parks", key: 'perth-kinross', load: fetchPerthKinross(area, dest.point) },
     ];
     const waiting = new Set(sources.map((src) => src.name));
     current = { dest, radius, options: [], clock, isNow, searchedAt: Date.now(), sourceNotes: [], loading: true, timings: [], lookupMs };
@@ -524,7 +528,8 @@ function render() {
 
   const counts = inRange.reduce((acc, o) => ({ ...acc, [o.status]: (acc[o.status] ?? 0) + 1 }), {});
   const warnings = [...sourceNotes];
-  if (isBankHoliday(clock.date)) {
+  // England's bank holidays: Scotland's differ.
+  if (isBankHoliday(clock.date) && !extraAreaAt(dest.point)) {
     warnings.push("It's a bank holiday. Many zones don't operate today, but some do. Check the signs.");
   }
   // Where and when are already in the boxes above, so the summary is just the counts;

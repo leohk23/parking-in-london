@@ -3,6 +3,10 @@
 // Greater London, trying "and"/"&" and ", London" variants, with duplicates removed.
 // Postcode-shaped input goes to postcodes.io, which understands partial
 // postcodes. Nominatim isn't used here: its usage policy rules out autocomplete.
+// The few places outside London the app covers (areas.js) are searched when
+// named, or when London has nothing.
+
+import { EXTRA_AREAS, extraAreaAt, extraAreaNamed } from './areas.js';
 
 const LONDON_BBOX = '-0.6,51.2,0.4,51.85';
 const POSTCODE_START_RE = /^[A-Z]{1,2}\d[A-Z\d]?(\s*\d[A-Z]{0,2})?$/i;
@@ -16,10 +20,15 @@ export async function fetchSuggestions(query, { fetchImpl = fetch, signal } = {}
     const postcodes = await fetchPostcodeSuggestions(q, fetchImpl, signal).catch(rethrowAbort);
     if (postcodes?.length) return postcodes;
   }
-  for (const variant of queryVariants(q)) {
+  const named = extraAreaNamed(q);
+  const searches = [
+    ...(named ? [] : queryVariants(q).map((variant) => () => fetchPhotonSuggestions(variant, fetchImpl, signal))),
+    ...(named ? [named] : EXTRA_AREAS).map((area) => () => fetchPhotonSuggestions(q, fetchImpl, signal, area)),
+  ];
+  for (const search of searches) {
     let found;
     try {
-      found = await fetchPhotonSuggestions(variant, fetchImpl, signal);
+      found = await search();
     } catch (err) {
       rethrowAbort(err);
       // A blocked or failed request won't succeed for the other variants either.
@@ -42,14 +51,17 @@ export function queryVariants(query) {
   return variants;
 }
 
-async function fetchPhotonSuggestions(q, fetchImpl, signal) {
-  // The box takes in some of Surrey, Kent, Essex and Hertfordshire too: ask for
-  // more, and keep Greater London's.
-  const params = new URLSearchParams({ q, limit: String(LIMIT * 3), lang: 'en', bbox: LONDON_BBOX });
+/** Photon's places in Greater London, or in `area` (one of EXTRA_AREAS). */
+async function fetchPhotonSuggestions(q, fetchImpl, signal, area) {
+  // London's box takes in some of Surrey, Kent, Essex and Hertfordshire too: ask
+  // for more, and keep Greater London's.
+  const bbox = area ? [area.bbox[1], area.bbox[0], area.bbox[3], area.bbox[2]].join(',') : LONDON_BBOX;
+  const params = new URLSearchParams({ q, limit: String(LIMIT * 3), lang: 'en', bbox });
   const res = await fetchImpl(`https://photon.komoot.io/api/?${params}`, { signal });
   if (!res.ok) return [];
   const { features = [] } = await res.json();
-  return features.filter((f) => f.properties?.county === 'Greater London').slice(0, LIMIT).map((f) => {
+  const inside = (f) => (area ? extraAreaAt([f.geometry.coordinates[1], f.geometry.coordinates[0]]) === area : f.properties?.county === 'Greater London');
+  return features.filter(inside).slice(0, LIMIT).map((f) => {
     const p = f.properties ?? {};
     const [lon, lat] = f.geometry.coordinates;
     return {
@@ -77,7 +89,7 @@ async function fetchPostcodeSuggestions(q, fetchImpl, signal) {
   if (!res.ok) return [];
   const { result } = await res.json();
   return (result ?? [])
-    .filter((r) => r.latitude != null && r.region === 'London')
+    .filter((r) => r.latitude != null && (r.region === 'London' || extraAreaAt([r.latitude, r.longitude])))
     .map((r) => ({
       label: [r.postcode, r.admin_ward].filter(Boolean).join(', '),
       point: [r.latitude, r.longitude],
