@@ -706,6 +706,15 @@ button.link {
   background: color-mix(in srgb, #b8336a 20%, transparent);
 }
 
+.chip-kind.carparks {
+  background: color-mix(in srgb, #2b6cb0 20%, transparent);
+}
+
+.cov-extra {
+  margin: 4px 0 6px;
+  font-size: 14px;
+}
+
 .chip-kind.none {
   background: color-mix(in srgb, var(--muted) 18%, transparent);
   color: var(--muted);

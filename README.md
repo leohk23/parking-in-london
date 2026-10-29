@@ -79,6 +79,8 @@ The government's [Digital Traffic Regulation Order service](https://www.gov.uk/g
 
 The City of London's map server and Hillingdon's 2013 map of its parking schemes do answer browsers, so the app asks them live. Bromley publishes no zone map, only a lookup of the zone at a place, which also answers browsers: for a search in Bromley the app asks it about the spot searched (`src/sources/bromley.js`) and shows the zone and its hours without an outline.
 
+Outside London, the app covers Pitlochry (`src/areas.js` lists such places; searches are limited to Greater London and them). Perth & Kinross Council's open data has its car parks, which answer browsers, and says which charge but not when: the hours (Mon-Sat 8am-6pm) are from RingGo's listing, in `src/sources/perth-kinross.js`. The council publishes no street restrictions, so a card for the town says its streets are mostly free for 30 minutes. OpenStreetMap there comes live from Overpass, as the prebuilt tiles cover London only.
+
 Richmond publishes no zone map or street list, only a parking lookup by address. `scripts/update-richmond.mjs` looks up the lowest and highest numbered addresses on each of its 2,000 streets, and the middle one when they disagree (about 6,000 requests, 40 minutes), so it runs monthly from its own workflow (`.github/workflows/richmond.yml`), which commits `data/richmond.json` when it changes. A street whose ends are in different zones, or only one end in a zone, is marked as only part of the road.
 
 Ealing's hours are read from each zone page, except five zones whose pages give exceptions in prose (zones listed together, streets with their own hours), transcribed into `ZONES` in `scripts/update-ealing.mjs`; the script warns when their wording changes.
